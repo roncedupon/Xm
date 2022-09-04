@@ -49,5 +49,5 @@ class RegTable extends Component{
 	val LD4567=Reg2.field(Bits(4 bit),WO,doc="O:接外面的灯，测试").asOutput()
 
 
-	bus.accept(HtmlGenerator("regif.html", "RegTable V1"))
+	bus.accept(HtmlGenerator("regif.html", "RegTable V1"))//fuck
 }

@@ -50,4 +50,5 @@ class RegTable extends Component{
 
 
 	bus.accept(HtmlGenerator("regif.html", "RegTable V1"))
+	//git pull 测试哈哈哈哈
 }

@@ -46,8 +46,7 @@ class RegTable extends Component{
 
     val LD0123=Reg2.field(Bits(4 bit),WO,doc="O:接外面的灯，测试").asOutput()
 	//val Read_Ps_Num=Reg0.field(Bits(10 bit),WO,doc="pl 从ps ddr读数据的数量").asInput()--报错
-	val LD4567=Reg2.field(Bits(4 bit),WO,doc="O:接外面的灯，测试").asOutput()
-
+	val LD4567=Reg2.field(Bits(4 bit),WO,doc="O:接外面的灯，测试").asOutput() 
 
 	bus.accept(HtmlGenerator("regif.html", "RegTable V1"))//fuck
 	//git pull 测试哈哈哈哈

@@ -23,6 +23,13 @@ case class MemConfig() {
     val LTY_BRAM_IN_WIDTH=128//Bram进数据位宽64
     val LTY_BRAM_OUT_WIDTH=32//Bram出数据位宽32
 
+    //连通域后处理
+    val STARPOINT_THRD=5//连通域所占的最小像素点
+    val PARA6_THRD_WIDTH=46//SNR_thrd*temp_back_std*2^32---所以这里的值应该是SNR_thrd*temp_back_std放大2^32之后的值
+    //这里需要注意的是：这里拿第六个参数进行比较，第六个参数是sum(ImgFilter(i,j)+0.4),我希望拿到的都是放大后的结果，要和上一层交接好
+
+
+
     //星图匹配
     val IDENTTHRD=100000
     val TRIANGLE_DATA_IN_NUM=774320+20

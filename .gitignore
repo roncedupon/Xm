@@ -2,3 +2,4 @@
 !/src/
 !.gitignore
 !.build.sbt
+!/上位机/

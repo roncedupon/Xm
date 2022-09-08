@@ -47,7 +47,7 @@ case class MedFilterFsm(start: Bool) extends Area {
         }
         is(MedEnum.INIT){
             when(INIT_END){
-                nextState:=MedEnum.WAIT_FIFO_READY//等9行缓存
+                nextState:=MedEnum.WAIT_FIFO_READY//等8行缓存
             }otherwise{
                 nextState:=MedEnum.INIT
             }

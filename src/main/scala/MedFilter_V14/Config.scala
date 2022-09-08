@@ -16,7 +16,8 @@ case class MemConfig() {
 
     //连通域处理相关
     //一些要求：
-        //⭐stream流数据位宽要和Bram数据位宽相同，这是为了以后实现更高的并行度准备的，目前的并行度仍然为2
+        //⭐（已失效）stream流数据位宽要和Bram数据位宽相同，这是为了以后实现更高的并行度准备的，目前的并行度仍然为2
+        //使用xilinx的Bram Ip，采用进32 bit出16 bit
     val STREAM_DATA_WIDTH=32//stream流数据位宽
     val FEATURE_DATA_WIDTH=16//滤波后图片像素位宽
     val LTY_NUM_WIDTH=11//连通域个数数据位宽
@@ -24,7 +25,7 @@ case class MemConfig() {
     val LTY_ROW_NUM=2040//2048个点，减去前面4个和后面4个，2040，
         //标记矩阵相关
     val LTY_MARK_BRAM_DEPTH=LTY_COL_NUM//标记矩阵的深度，也不用加一
-    val LTY_MARK_BRAM_WIDTH=16//标记矩阵的数据位宽
+    val LTY_MARK_BRAM_WIDTH=10//标记矩阵的数据位宽（1024）
         //滤波后的图片缓存
     val LTY_DATA_BRAM_DATA_WIDTH=32//输入和输出位宽一样，懒得做位宽转换了，就这样吧
     val LTY_DATA_BRAM_DEPTH=LTY_COL_NUM/(LTY_DATA_BRAM_DATA_WIDTH/FEATURE_DATA_WIDTH)//滤波后图片数据的缓存深度

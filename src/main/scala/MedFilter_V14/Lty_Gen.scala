@@ -2,7 +2,7 @@ package MedFilter_V12
 import spinal.core._
 import spinal.lib.slave
 import Archive.WaCounter
-class Lty_Bram extends BlackBox{
+class Lty_Bram extends BlackBox{//黑盒，入32bit，出16 bit
     val Config=MemConfig()//浮点乘法器
     val io=new Bundle{//component要求out有驱动，但是black box不要求out的驱动
         val CLK=in Bool()
@@ -121,6 +121,7 @@ class Lty_Mark_Gen extends Component{//连通域标记
         0->mem(1).readSync(Col_Cnt.count)
         1->mem(2).readSync(Col_Cnt.count)
     }
+//建立2个标记矩阵
 
 }
 class Lty_Mark_Sub_Module extends Component{//标记子模块
@@ -150,4 +151,8 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
 }
 class Lty_Para_Accu extends Component{
     //连通域参数累加
+}
+object LtyGen extends App { 
+    val verilog_path="./testcode_gen/MemGen" 
+   SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Lty_Mark_Gen)
 }

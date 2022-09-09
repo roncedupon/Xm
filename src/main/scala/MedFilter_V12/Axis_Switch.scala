@@ -80,7 +80,7 @@ class Axis_Switch_1s(Master_Port_Num:Int,Data_Width:Int) extends Component{
         val axis_mm2s_tvalid=out Bool()
         axis_mm2s_tkeep:=s0_axis_s2mm.tkeep
         },Master_Port_Num)
-
+    s0_axis_s2mm.tready:=False
     for(i<-0 to Master_Port_Num-1){
         when(io.Switch===i){
             s0_axis_s2mm.tready:=m(i).axis_mm2s_tready
@@ -88,7 +88,6 @@ class Axis_Switch_1s(Master_Port_Num:Int,Data_Width:Int) extends Component{
             m(i).axis_mm2s_tlast:=s0_axis_s2mm.tlast
             m(i).axis_mm2s_tvalid:=s0_axis_s2mm.tvalid
         }otherwise{
-            s0_axis_s2mm.tready:=False
             m(i).axis_mm2s_tdata:=0
             m(i).axis_mm2s_tlast:=False
             m(i).axis_mm2s_tvalid:=False
@@ -114,8 +113,12 @@ class Axis_Switch_2s(Slave_Port_Num:Int,Data_Width:Int) extends Component{
         val axis_s2mm_tlast=in Bool()
         val axis_s2mm_tready=out Bool()
         val axis_s2mm_tvalid=in Bool()
+        axis_s2mm_tready:=False
     },Slave_Port_Num)//生成这么多个slave口，放左边
-
+    m0_axis_mm2s.tdata:=0
+    m0_axis_mm2s.tkeep:=0
+    m0_axis_mm2s.tlast:=False
+    m0_axis_mm2s.tvalid:=False
     for(i<-0 to Slave_Port_Num-1){
         when(io.Switch===i){
             s(i).axis_s2mm_tready:=m0_axis_mm2s.tready//出去的ready
@@ -123,17 +126,11 @@ class Axis_Switch_2s(Slave_Port_Num:Int,Data_Width:Int) extends Component{
             m0_axis_mm2s.tdata:=s(i).axis_s2mm_tdata
             m0_axis_mm2s.tlast:=s(i).axis_s2mm_tlast
             m0_axis_mm2s.tvalid:=s(i).axis_s2mm_tvalid
-        }otherwise{
-            s(i).axis_s2mm_tready:=False
-            m0_axis_mm2s.tdata:=0
-            m0_axis_mm2s.tkeep:=0
-            m0_axis_mm2s.tlast:=False
-            m0_axis_mm2s.tvalid:=False
         }
     }
 }
 object StreamSwitchGen extends App { 
     val verilog_path="./testcode_gen/MemGen" 
-   SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Axis_Switch_2s(2,64))
-   SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Axis_Switch_1s(2,64))
+   SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Axis_Switch_2s(2,32))
+   SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Axis_Switch_1s(2,32))
 }

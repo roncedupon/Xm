@@ -54,27 +54,27 @@ class Axis_Switch() extends Component{
 }
 
 
-object Stream_Switch extends SpinalEnum(defaultEncoding = binaryOneHot) {
-    for(i<-0 to 2){
+case class Stream_Switch(Enum_Num:Int) extends SpinalEnum(defaultEncoding = binaryOneHot) {
+    for(i<-0 to log2Up(Enum_Num)){
          val ChoseFlag = newElement
     }
 }
-class Axis_Switch_sl2ma(Master_Port_Num:Int) extends Component{
+class Axis_Switch_sl2ma(Master_Port_Num:Int,Data_Width:Int) extends Component{
     val io=new Bundle{
         val Switch=in UInt(2 bits)
     }
         noIoPrefix()
     val s0_axis_s2mm=new Bundle{//一个从接口，两个主接口
-        val tdata=in UInt(32 bits)
-        val tkeep=in UInt(4 bits)
+        val tdata=in UInt(Data_Width bits)
+        val tkeep=in UInt(Data_Width/8 bits)
         val tlast=in Bool()
         val tready=out Bool()
         val tvalid=in Bool()
     }
 
     val masterport=Vec(new Bundle{        
-        val tdata=out UInt(32 bits)
-        val tkeep=out UInt(4 bits)
+        val tdata=out UInt(Data_Width bits)
+        val tkeep=out UInt(Data_Width/8 bits)
         val tlast=out Bool()
         val tready=in Bool()
         val tvalid=out Bool()
@@ -96,37 +96,44 @@ class Axis_Switch_sl2ma(Master_Port_Num:Int) extends Component{
     }
 }
 
-class Axis_ma2sla(Slave_Port_Num:Int) extends Component{
+class Axis_ma2sla(Slave_Port_Num:Int,Data_Width:Int) extends Component{
     val io=new Bundle{
         val Switch=in Bits(log2Up(Slave_Port_Num) bits)
     }
     noIoPrefix()
     val m0_axis_mm2s=new Bundle{//一个主接口，多个从接口
-        val tdata=out UInt(32 bits)
-        val tkeep=out UInt(4 bits)
+        val tdata=out UInt(Data_Width bits)
+        val tkeep=out UInt(log2Up(Data_Width) bits)
         val tlast=out Bool()
         val tready=in Bool()
         val tvalid=out Bool()
     }
-    val SlavePort=Vec(new Bundle{        
-        val tdata=in UInt(32 bits)
-        val tkeep=in UInt(4 bits)
-        val tlast=in Bool()
-        val tready=out Bool()
-        val tvalid=in Bool()
+    val s=Vec(new Bundle{        
+        val axis_s2mm_tdata=in UInt(Data_Width bits)
+        val axis_s2mm_tkeep=in UInt(log2Up(Data_Width) bits)
+        val axis_s2mm_tlast=in Bool()
+        val axis_s2mm_tready=out Bool()
+        val axis_s2mm_tvalid=in Bool()
     },Slave_Port_Num)//生成这么多个slave口，放左边
 
     for(i<-0 to Slave_Port_Num-1){
         when(io.Switch===i){
-            SlavePort(i).tready:=m0_axis_mm2s.tready//出去的ready
-            m0_axis_mm2s.tkeep:=SlavePort(i).tkeep
-            m0_axis_mm2s.tdata:=SlavePort(i).tdata
-            m0_axis_mm2s.tlast:=SlavePort(i).tlast
-            m0_axis_mm2s.tvalid:=SlavePort(i).tvalid
+            s(i).axis_s2mm_tready:=m0_axis_mm2s.tready//出去的ready
+            m0_axis_mm2s.tkeep:=s(i).axis_s2mm_tkeep
+            m0_axis_mm2s.tdata:=s(i).axis_s2mm_tdata
+            m0_axis_mm2s.tlast:=s(i).axis_s2mm_tlast
+            m0_axis_mm2s.tvalid:=s(i).axis_s2mm_tvalid
         }otherwise{
-            SlavePort(i).tready:=False
+            s(i).axis_s2mm_tready:=False
             m0_axis_mm2s.tdata:=0
             m0_axis_mm2s.tkeep:=0
+            m0_axis_mm2s.tlast:=False
+            m0_axis_mm2s.tvalid:=False
         }
     }
+}
+object StreamSwitchGen extends App { 
+    val verilog_path="./testcode_gen/MemGen" 
+   SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Axis_ma2sla(2,64))
+   SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Axis_Switch_sl2ma(2,64))
 }

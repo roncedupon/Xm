@@ -128,7 +128,7 @@ class Axis_Switch_2s(Slave_Port_Num:Int,Data_Width:Int) extends Component{
             m0_axis_mm2s.tvalid:=s(i).axis_s2mm_tvalid
         }
     }
-}
+}//哈哈哈
 object StreamSwitchGen extends App { 
     val verilog_path="./testcode_gen/MemGen" 
    SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Axis_Switch_2s(2,32))

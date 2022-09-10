@@ -256,6 +256,7 @@ class Map_Stream extends Component{
     
 
 }
+//V13版本：修改了V12版本的输出少一个点的Bug，实现全部20个点的输出
 object MapGen extends App { 
     val verilog_path="./testcode_gen/MemGen" 
    SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Map_Stream)

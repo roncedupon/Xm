@@ -14,6 +14,13 @@ case class MemConfig() {
     val MUL_B_In=16
     val MUL_P_OUT=32
 
+
+    //Axis_Switch配置
+    val AXIS_SWITCH_1S_WIDTH=64//1s的数据位宽是64
+    val AXIS_SWITCH_1S_PORT=2//master口个数
+
+    val AXIS_SWITCH_2S_WIDTH=64//2s的数据位宽是64
+    val AXIS_SWITCH_2S_PORT=2//Slave口个数
     //连通域处理相关
     val LTY_NUM_WIDTH=11//连通域个数数据位宽
     val LTY_COL_NUM=1020//一次进32 bit，2048个点，减去前面4个和后面4个，2040，再除个2（要修改）

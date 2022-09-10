@@ -1,7 +1,7 @@
 package MedFilter_V12
 
 import spinal.core._
-class Axis_Switch() extends Component{
+class Axis_Switch extends Component{
         val io=new Bundle{
             val Switch=in UInt(1 bits)
         }
@@ -52,7 +52,25 @@ class Axis_Switch() extends Component{
     }
     
 }
-
+//spinalhdl的总线接口自动连线测试
+class Only_One_Master extends Component{
+    val m1_axis_mm2s=new Bundle{
+        val tdata=out UInt(32 bits)
+        val tkeep=out UInt(4 bits)
+        val tlast=out Bool()
+        val tready=in Bool()
+        val tvalid=out Bool()
+    }
+    m1_axis_mm2s.tdata:=0
+    m1_axis_mm2s.tkeep:=0
+    m1_axis_mm2s.tlast:=False
+    m1_axis_mm2s.tvalid:=False
+}
+class Lined_Test extends Component{
+    val Master_port=new Only_One_Master
+    val Slave_Port=new Axis_Switch
+    Slave_Port.s0_axis_s2mm<>Master_port.m1_axis_mm2s
+}
 
 case class Stream_Switch(Enum_Num:Int) extends SpinalEnum(defaultEncoding = binaryOneHot) {
     for(i<-0 to log2Up(Enum_Num)){
@@ -133,4 +151,5 @@ object StreamSwitchGen extends App {
     val verilog_path="./testcode_gen/MemGen" 
    SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Axis_Switch_2s(2,32))
    SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Axis_Switch_1s(2,32))
+   SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Lined_Test)
 }

@@ -1,4 +1,4 @@
-package MedFilter_V9
+package MedFilter_V12
 import spinal.core._
 import spinal.lib.slave
 import spinal.lib.master
@@ -23,20 +23,7 @@ class Fifo_Test extends Component{
     Fifo.io.pop.ready:=io.fifo_ready
     io.Data_out:=Fifo.io.pop.payload
 }
-case class MemConfig() {
-    val BRAM_IN_DATA_WIDTH=32
-    val BRAM_OUT_DATA_WIDTH=32//还没学会怎么进128出16,但是想到了一种进64出64的办法
-    val BRAM_DEPTH=(2048)/(BRAM_IN_DATA_WIDTH/16)//BRAM 数据深度
-    //一次进64也就是4个点，所以需要进2048/4=512次，可以认为列计数为512
-    val COl_CNT_NUM=(2048)/(BRAM_IN_DATA_WIDTH/16)//假如2048个点,一次进32bit,一次读32bit,那么需要1024个地址
-    val ROW_CNT_NUM=2048//行计数
-    val BRAM_NUM=8
-    //乘法器相关--目前只针对滤波模块的A*B
-    val MUL_LATENCY=4//平方和乘法器延迟
-    val MUL_A_IN=16
-    val MUL_B_In=16
-    val MUL_P_OUT=32
-}//中值滤波配置
+
 object MedEnum extends SpinalEnum(defaultEncoding = binaryOneHot) {
     val IDLE, INIT, WAIT_9_ROWS,WAIT_LAST_ROW,COl_END,WAIT_FIFO_READY= newElement//这些状态应该都被用到,不然会有latch,不知道为啥
 }
@@ -60,7 +47,7 @@ case class MedFilterFsm(start: Bool) extends Area {
         }
         is(MedEnum.INIT){
             when(INIT_END){
-                nextState:=MedEnum.WAIT_FIFO_READY//等9行缓存
+                nextState:=MedEnum.WAIT_FIFO_READY//等8行缓存
             }otherwise{
                 nextState:=MedEnum.INIT
             }

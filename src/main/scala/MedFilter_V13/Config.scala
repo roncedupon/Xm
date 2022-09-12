@@ -22,13 +22,28 @@ case class MemConfig() {
     val AXIS_SWITCH_2S_WIDTH=64//2s的数据位宽是64
     val AXIS_SWITCH_2S_PORT=2//Slave口个数
     //连通域处理相关
+    //一些要求：
+        //⭐（已失效）stream流数据位宽要和Bram数据位宽相同，这是为了以后实现更高的并行度准备的，目前的并行度仍然为2
+        //使用xilinx的Bram Ip，采用进32 bit出16 bit
+    val STREAM_DATA_WIDTH=32//stream流数据位宽
+    val FEATURE_DATA_WIDTH=16//滤波后图片像素位宽
     val LTY_NUM_WIDTH=11//连通域个数数据位宽
-    val LTY_COL_NUM=1020//一次进32 bit，2048个点，减去前面4个和后面4个，2040，再除个2（要修改）
-    val LTY_ROW_NUM=1020//一次进32 bit，2048个点，减去前面4个和后面4个，2040，再除个2（要修改）
-    val LTY_MARK_MEM_DEPTH=2040//标记矩阵的深度
-    val LTY_BRAM_DEPTH=1020//数据缓存深度
-    val LTY_BRAM_IN_WIDTH=128//Bram进数据位宽64
-    val LTY_BRAM_OUT_WIDTH=32//Bram出数据位宽32
+    val LTY_COL_NUM=2040//2048个点，减去前面4个和后面4个，2040，
+    val LTY_ROW_NUM=2040//2048个点，减去前面4个和后面4个，2040，
+        //标记矩阵相关
+    val LTY_MARK_BRAM_DEPTH=LTY_COL_NUM//标记矩阵的深度，也不用加一
+    val LTY_MARK_BRAM_WIDTH=10//标记矩阵的数据位宽（1024）
+        //滤波后的图片缓存
+    val LTY_DATA_BRAM_DATA_WIDTH=32//输入和输出位宽一样，懒得做位宽转换了，就这样吧
+    val LTY_DATA_BRAM_DEPTH=LTY_COL_NUM/(LTY_DATA_BRAM_DATA_WIDTH/FEATURE_DATA_WIDTH)//滤波后图片数据的缓存深度
+
+
+    //连通域后处理
+    val STARPOINT_THRD=5//连通域所占的最小像素点
+    val PARA6_THRD_WIDTH=46//SNR_thrd*temp_back_std*2^32---所以这里的值应该是SNR_thrd*temp_back_std放大2^32之后的值
+    //这里需要注意的是：这里拿第六个参数进行比较，第六个参数是sum(ImgFilter(i,j)+0.4),我希望拿到的都是放大后的结果，要和上一层交接好
+
+
 
     //星图匹配
     val IDENTTHRD=100000

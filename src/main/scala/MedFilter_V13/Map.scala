@@ -150,16 +150,15 @@ class Map_Triangle_Mem extends Component{
     val INIT_CNT=WaCounter(Fsm.currentState === MAP_ENUM.INIT, 3, 5)//初始化计数器,数五拍
     Fsm.Init_End:=INIT_CNT.valid
     Fsm.Load_20End:=(counter.count===19&&io.sData.valid)//到底是20还是19？(19)---⭐⭐⭐2022/9/2:添加&&io.sData.valid不然sValid=~sValid过不去，bug修正
-    Fsm.Compare_End:=RegNext(counter.valid)//所有数发完了，就进入发送20个结果状态，RegNext的原因：counter统计的是io口进来的数据，但是进来的数据有一个选择的过程，这里有一个延时
-    val Send_Data_Valid=Delay(Fsm.currentState===MAP_ENUM.SEND_20_DATA,5)//发给Ps的计算结果数据---待处理
-    val Send_20_Counter=WaCounter(io.mReady&&Send_Data_Valid&&Fsm.currentState===MAP_ENUM.SEND_20_DATA,log2Up(20),20-1)//
+    Fsm.Compare_End:=Delay(counter.valid,3)//所有数发完了，就进入发送20个结果状态，Delay3的原因，counter valid了但是比较器还在比较
+    val Send_20_Counter=WaCounter(io.mReady&&Fsm.currentState===MAP_ENUM.SEND_20_DATA,log2Up(20),20-1)//
     when(Fsm.currentState===MAP_ENUM.IDLE){
         Send_20_Counter.clear
     }
     Fsm.Send_20_End:=Send_20_Counter.count===19&&io.mReady//这个valid信号可能有问题
     //stream流握手控制============================================
 
-    io.mValid:=Send_Data_Valid&&Fsm.currentState===MAP_ENUM.SEND_20_DATA//mvalid可能存在相互耦合的情况。。。。
+    io.mValid:=RegNext(Fsm.currentState===MAP_ENUM.SEND_20_DATA)//RegNext的原因：下面用了一个mData_tmp做数据选择，不知道为什么不能用组合逻辑。。。
     val Reg20=Vec(Reg(UInt(96 bits))init(0),21)
     when(io.sData.valid){//数据有效才启动赋值操作
         when(counter.count<20){
@@ -220,7 +219,7 @@ class Map_Triangle_Mem extends Component{
     }otherwise{
         io.sData.ready:=False
     }
-    io.mLast:=Fsm.currentState===MAP_ENUM.SEND_20_DATA&&Fsm.nextState===MAP_ENUM.IDLE
+    io.mLast:=RegNext(Send_20_Counter.valid)
 }
 
 
@@ -257,6 +256,7 @@ class Map_Stream extends Component{
     
 
 }
+//V13版本：修改了V12版本的输出少一个点的Bug，实现全部20个点的输出
 object MapGen extends App { 
     val verilog_path="./testcode_gen/MemGen" 
    SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Map_Stream)

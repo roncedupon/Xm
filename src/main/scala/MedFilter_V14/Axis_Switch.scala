@@ -84,7 +84,7 @@ class Axis_Switch_1s(Master_Port_Num:Int,Data_Width:Int) extends Component{
         noIoPrefix()
     val s0_axis_s2mm=new Bundle{//一个从接口，两个主接口
         val tdata=in UInt(Data_Width bits)
-        val tkeep=in UInt(Data_Width/8 bits)
+        val tkeep=in Bits(Data_Width/8 bits)
         val tlast=in Bool()
         val tready=out Bool()
         val tvalid=in Bool()
@@ -92,7 +92,7 @@ class Axis_Switch_1s(Master_Port_Num:Int,Data_Width:Int) extends Component{
 
     val m=Vec(new Bundle{        
         val axis_mm2s_tdata=out UInt(Data_Width bits)
-        val axis_mm2s_tkeep=out UInt(Data_Width/8 bits)
+        val axis_mm2s_tkeep=out Bits(Data_Width/8 bits)
         val axis_mm2s_tlast=out Bool()
         val axis_mm2s_tready=in Bool()
         val axis_mm2s_tvalid=out Bool()
@@ -120,14 +120,14 @@ class Axis_Switch_2s(Slave_Port_Num:Int,Data_Width:Int) extends Component{
     noIoPrefix()
     val m0_axis_mm2s=new Bundle{//一个主接口，多个从接口
         val tdata=out UInt(Data_Width bits)
-        val tkeep=out UInt(Data_Width/8 bits)
+        val tkeep=out Bits(Data_Width/8 bits)
         val tlast=out Bool()
         val tready=in Bool()
         val tvalid=out Bool()
     }
     val s=Vec(new Bundle{        
         val axis_s2mm_tdata=in UInt(Data_Width bits)
-        val axis_s2mm_tkeep=in UInt(Data_Width/8 bits)
+        val axis_s2mm_tkeep=in Bits(Data_Width/8 bits)
         val axis_s2mm_tlast=in Bool()
         val axis_s2mm_tready=out Bool()
         val axis_s2mm_tvalid=in Bool()
@@ -149,7 +149,7 @@ class Axis_Switch_2s(Slave_Port_Num:Int,Data_Width:Int) extends Component{
 }//哈哈哈,伟哥牛逼
 object StreamSwitchGen extends App { 
     val verilog_path="./testcode_gen/MemGen" 
-   SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Axis_Switch_2s(2,64))
-   SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Axis_Switch_1s(2,64))
+   SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Axis_Switch_2s(3,64))
+   SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Axis_Switch_1s(3,64))
   // SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Lined_Test)
 }

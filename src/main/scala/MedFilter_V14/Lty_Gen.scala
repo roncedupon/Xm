@@ -4,15 +4,25 @@ import spinal.lib.slave
 import Archive.WaCounter
 class Lty_Bram extends BlackBox{//黑盒，入32bit，出16 bit
     val Config=MemConfig()//浮点乘法器
+    
     val io=new Bundle{//component要求out有驱动，但是black box不要求out的驱动
-        val CLK=in Bool()
-        // val addra=in UInt(Config.Mu)
-        val A=in UInt(Config.MUL_A_IN bits)
-        val B=in UInt(Config.MUL_B_In bits)
-        val P=out UInt(Config.MUL_P_OUT bits)
+        val clka=in Bool()
+        val addra=in UInt(log2Up(Config.LTY_DATA_BRAM_A_DEPTH) bits)
+        val dina=in UInt(Config.LTY_DATA_BRAM_A_WIDTH bits)
+        val ena=in Bool()
+        val wea=in Bool()
+
+        //B口读使能一直有效
+        val addrb=in UInt(log2Up(Config.LTY_DATA_BRAM_B_DEPTH) bits)
+        val clkb=in Bool()
+        val doutb=out UInt((Config.LTY_DATA_BRAM_B_WIDTH) bits)
     }
+
     noIoPrefix()
-    mapClockDomain(clock=io.CLK)
+    // Clock A is map on a specific clock Domain
+    mapClockDomain(this.clockDomain, io.clka)
+    // Clock B is map on the current clock domain
+    mapCurrentClockDomain(io.clkb)
 }
 object LTY_ENUM extends SpinalEnum(defaultEncoding = binaryOneHot) {
   val IDLE, INIT, LOAD_2_ROWS,EXTRACT_LTY,JUDGE_LAST_ROW,WAIT_NEXT_READY = newElement
@@ -47,7 +57,7 @@ case class LTY_FSM(start: Bool) extends Area {
             nextState:=LTY_ENUM.INIT
         }
     }
-    is(LTY_ENUM.LOAD_2_ROWS){
+    is(LTY_ENUM.LOAD_2_ROWS){//加载前两行
         when(Col_End){
             nextState:=LTY_ENUM.JUDGE_LAST_ROW
         }otherwise{
@@ -93,35 +103,55 @@ class Lty_Mark_Gen extends Component{//连通域标记
     }
     val Fsm=LTY_FSM(io.start)
 //状态机相关====================================================================
-    val Col_Cnt=WaCounter(io.sData.valid&&io.sData.ready, log2Up(Config.LTY_DATA_BRAM_DEPTH), Config.LTY_DATA_BRAM_DEPTH-1)//创建列计数器
+    val Col_Cnt=WaCounter(io.sData.valid&&io.sData.ready, log2Up(Config.LTY_DATA_BRAM_A_DEPTH), Config.LTY_DATA_BRAM_A_DEPTH-1)//创建列计数器
+    val Bram_Out_Cnt=WaCounter(io.sData.valid&&io.sData.ready, log2Up(Config.LTY_DATA_BRAM_B_DEPTH), Config.LTY_DATA_BRAM_B_DEPTH-1)//创建列计数器
     val INIT_CNT=WaCounter(Fsm.currentState === LTY_ENUM.INIT, 3, 5)//初始化计数器,数五拍
     val Row_Cnt_All=WaCounter(Col_Cnt.valid,log2Up(Config.LTY_ROW_NUM),Config.LTY_ROW_NUM-1)//行计数器
-    val Bram_Write_Chose=WaCounter(Col_Cnt.valid,log2Up(4),3)//0，1，2，3循环写
-    //一个Bram写选择器，一个Bram读选择器
-    val Bram_Read_Chose=UInt(1 bits)//要准确控制才行
+    val Bram_Write_Choose=WaCounter(Col_Cnt.valid,log2Up(4),3)//0，1，2，3循环写
     Fsm.Init_End:=INIT_CNT.valid
-//创建标记矩阵---并行度为2，所以需要先加载两行=====================================
-    val Up_Mark_Mem=Mem(UInt(Config.LTY_MARK_BRAM_WIDTH bits),wordCount=Config.LTY_MARK_BRAM_DEPTH)//标记矩阵
-//建立四个数据缓存Bram
+//一个Bram写选择器，一个Bram读选择器
+    val Bram_Read_Chose=UInt(1 bit)//要准确控制才行，是读0，1还是2，3
+    //4个Bram的作用是在计算前两行的时候加载后两行数据
+
+//创建标记矩阵---并行度为2，所以也得要两个Ram作为上标记矩阵=====================================
+    val Up_Mark_Mem1=Mem(UInt(Config.LTY_MARK_BRAM_WIDTH bits),wordCount=Config.LTY_MARK_BRAM_DEPTH)//标记矩阵
+    val Up_Mark_Mem2=Mem(UInt(Config.LTY_MARK_BRAM_WIDTH bits),wordCount=Config.LTY_MARK_BRAM_DEPTH)//标记矩阵
+//建立四个数据缓存Bram=======================================================================
     val Wr_En=Vec(Bool(),4)//循环写
-    val mem=Array.tabulate(4)(i=>{
-        def gen():Mem[UInt]={
-            val mem=Mem(UInt(Config.BRAM_IN_DATA_WIDTH bits),wordCount=Config.BRAM_DEPTH)//
-            mem.write(Col_Cnt.count,io.sData.payload,Bram_Write_Chose.count===i)//写地址,写数据,写使能都延迟了一拍
-            
+    for(i<-0 to 3){
+        Wr_En(i):=Bram_Write_Choose.count===i
+    }
+    val FeatureMem=Array.tabulate(4)(i=>{
+        def gen():Lty_Bram={
+            val mem=new Lty_Bram//
             mem
         }
         gen()
     })
-    val RdData_Line1=Bram_Read_Chose.mux{//输出数据选择器
-        0->mem(0).readSync(Col_Cnt.count)
-        1->mem(3).readSync(Col_Cnt.count)
+    //写数据，需要处理写使能，写地址，写数据
+    for(i<-0 to 3){
+        FeatureMem(i).io.ena:=Wr_En(i)//4个Bram的写使能
+        FeatureMem(i).io.addra:=Col_Cnt.count//4个Bram的写地址
+        FeatureMem(i).io.dina:=io.sData.payload//4个Bram的写数据
+        FeatureMem(i).io.wea:=True
+
+    }//读数据=================================
+
+    for(i<-0 to 3){
+        FeatureMem(i).io.addrb:=Bram_Out_Cnt.count//读地址待处理
     }
-    val RdData_Line2=Bram_Read_Chose.mux{//输出数据选择器
-        0->mem(1).readSync(Col_Cnt.count)
-        1->mem(2).readSync(Col_Cnt.count)
-    }
+    val RdData_Line1=Bram_Read_Chose.mux(//输出数据选择器
+        0->FeatureMem(0).io.doutb,
+        1->FeatureMem(3).io.doutb
+    )
+    val RdData_Line2=Bram_Read_Chose.mux(//输出数据选择器
+        0->FeatureMem(1).io.doutb,
+        1->FeatureMem(2).io.doutb
+    )//mux必须是圆括号
 //建立2个标记矩阵
+
+
+io.sData.ready:=True//待处理
 
 }
 class Lty_Mark_Sub_Module extends Component{//标记子模块
@@ -146,13 +176,11 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         }
     }
 
-
-
 }
 class Lty_Para_Accu extends Component{
     //连通域参数累加
 }
 object LtyGen extends App { 
-    val verilog_path="./testcode_gen/MemGen" 
+    val verilog_path="./testcode_gen/Lty_Gen" 
    SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Lty_Mark_Gen)
 }

@@ -117,7 +117,7 @@ class Med_Sort_Stream extends Component{
         val m_axis_mm2s_tvalid=out Bool()
 
         val s_axis_s2mm_tdata=in UInt(32 bits)
-        val s_axis_s2mm_tkeep=in UInt(4 bits)
+        val s_axis_s2mm_tkeep=in Bits(4 bits)
         val s_axis_s2mm_tlast=in Bool()
         val s_axis_s2mm_tready=out Bool()
         val s_axis_s2mm_tvalid=in Bool()

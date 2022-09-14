@@ -226,14 +226,16 @@ class Map_Triangle_Mem extends Component{
 
 class Map_Stream extends Component{
     val io=new Bundle{
-        val m_axis_mm2s_tdata=out UInt(64 bits)
-        val m_axis_mm2s_tkeep=out Bits(4 bits)
+        def DATA_IN_WIDTH=64
+        val m_axis_mm2s_tdata=out UInt(DATA_IN_WIDTH bits)
+        val m_axis_mm2s_tkeep=out Bits(DATA_IN_WIDTH/8 bits)
         val m_axis_mm2s_tlast=out Bool()
         val m_axis_mm2s_tready=in Bool()
         val m_axis_mm2s_tvalid=out Bool()
 
-        val s_axis_s2mm_tdata=in UInt(96 bits)
-        val s_axis_s2mm_tkeep=in UInt(4 bits)
+        def DATA_OUT_WIDTH=96
+        val s_axis_s2mm_tdata=in UInt(DATA_OUT_WIDTH bits)
+        val s_axis_s2mm_tkeep=in Bits(DATA_OUT_WIDTH/8 bits)
         val s_axis_s2mm_tlast=in Bool()
         val s_axis_s2mm_tready=out Bool()
         val s_axis_s2mm_tvalid=in Bool()
@@ -247,7 +249,7 @@ class Map_Stream extends Component{
     Map_Triangle_Module.io.mValid<>io.m_axis_mm2s_tvalid
     Map_Triangle_Module.io.mReady<>io.m_axis_mm2s_tready
     Map_Triangle_Module.io.mLast<>io.m_axis_mm2s_tlast
-    io.m_axis_mm2s_tkeep:=B"4'b1111"
+    io.m_axis_mm2s_tkeep.setAll()//全部设置为1
 
     Map_Triangle_Module.io.sData.payload<>io.s_axis_s2mm_tdata
     Map_Triangle_Module.io.sData.valid<>io.s_axis_s2mm_tvalid

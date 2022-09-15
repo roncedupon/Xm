@@ -35,9 +35,9 @@ case class MemConfig() {
     val LTY_MARK_BRAM_WIDTH=10//标记矩阵的数据位宽（1024）
 
         //滤波后的图片缓存
-    val LTY_DATA_BRAM_A_WIDTH=32//二并行度，输入是32 bit，输出是16 bit
+    val LTY_DATA_BRAM_A_WIDTH=64//二并行度，输入是32 bit，输出是16 bit
     val LTY_DATA_BRAM_B_WIDTH=16//出16 bit
-    val LTY_DATA_BRAM_A_DEPTH=1020//滤波后图片数据A口的缓存深度
+    val LTY_DATA_BRAM_A_DEPTH=510 //滤波后图片数据A口的缓存深度
     val LTY_DATA_BRAM_B_DEPTH=2040//滤波后图片数据B口的缓存深度
 
 

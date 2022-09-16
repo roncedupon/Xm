@@ -130,11 +130,12 @@ class Lty_Mark_Gen extends Component{//连通域标记
     Fsm.Judge2Row_Col_End:=Col_Cnt.valid//缓存完开头两行中的一行
     Fsm.Load_2_Row_End:=Row_Cnt_All.count>1//开头两行被缓存完了，行计数器为2的时候那么就加载完两行了,不能大于等于一，因为加载完第0行后，Row_Cnt就已经是1了
  
-    Fsm.Col_End:=Bram_Out_Cnt.valid//发完了一行数据，也就是发送数据计数器数完了2040，表面上发送完一行，实际上处理完了两行
+    Fsm.Col_End:=RegNext(Bram_Out_Cnt.valid)//发完了一行数据，也就是发送数据计数器数完了2040，表面上发送完一行，实际上处理完了两行
+    //RegNext的原因：由于Bram输出慢一拍，所以需要RegNext一下，保证最后一个点也能正确输出
 //一个Bram写选择器，一个Bram读选择器
     val Bram_Read_Chose=Reg(Bool())init(False)//要准确控制才行，是读0，1还是2，3
     //4个Bram的作用是在计算前两行的时候加载后两行数据
-    when(Bram_Out_Cnt.valid){
+    when(RegNext(Bram_Out_Cnt.valid)){
         Bram_Read_Chose:=(!Bram_Read_Chose)
     }
    //违背逻辑的原因是避免在导入前两行的时候输出

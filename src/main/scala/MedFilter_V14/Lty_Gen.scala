@@ -3,6 +3,7 @@ import spinal.core._
 import spinal.lib.slave
 import Archive.WaCounter
 import spinal.lib.master
+
 class Lty_Bram extends BlackBox{//黑盒，入32bit，出16 bit
     val Config=MemConfig()//浮点乘法器
     
@@ -108,6 +109,18 @@ class Lty_Mark_Gen extends Component{//连通域标记
         val sData=slave Stream(UInt(Config.LTY_DATA_BRAM_A_WIDTH bits))//进来的数据
         val mData1=master Stream(UInt(Config.LTY_DATA_BRAM_B_WIDTH bits))//第一行出去的数据
         val mData2=master Stream(UInt(Config.LTY_DATA_BRAM_B_WIDTH bits))//第二行出去的数据
+
+        val Mark1Up_Out=out UInt(Config.LTY_MARK_BRAM_WIDTH bits)//出去的第一行的点上面对应的标记点
+        val Mark2Up_Out=out UInt(Config.LTY_MARK_BRAM_WIDTH bits)//出去的第一行的点上面对应的标记点
+
+        val Mark1_In=in UInt(Config.LTY_MARK_BRAM_WIDTH bits)//进来的的第一行的点对应的标记点，用于更新连通域标记矩阵
+        val Mark1_In_Addr=in UInt(log2Up(Config.LTY_MARK_BRAM_DEPTH) bits)//第一行需要更新的点的标记
+        val Mark1_In_Valid=in Bool()//写数据和写地址有效，更新连通域标记矩阵
+
+
+        val Mark2_In=in UInt(Config.LTY_MARK_BRAM_WIDTH bits)//出去的第2行的点对应的标记点
+        val Mark2_In_Addr=in UInt(log2Up(Config.LTY_MARK_BRAM_DEPTH) bits)//第2行需要更新的点的标记
+        val Mark2_In_Valid=in Bool()
         val start=in Bool()//lty计算启动信号
     }
     noIoPrefix()
@@ -116,6 +129,8 @@ class Lty_Mark_Gen extends Component{//连通域标记
     //val Data_Out_Flag=Fsm.currentState===LTY_ENUM.EXTRACT_LTY||Fsm.currentState===LTY_ENUM.WAIT_NEXT_READY
     //不用这个↑作为mValid的判断是因为mValid标识出来的输出数据开头第一个会重复一下，结尾会少一个
     val Col_Cnt=WaCounter(io.sData.valid&&io.sData.ready, log2Up(Config.LTY_DATA_BRAM_A_DEPTH), Config.LTY_DATA_BRAM_A_DEPTH-1)//创建输入数据的列计数器
+    //Bram_Out_Cnt决定一行的结束，由于Bram2一定慢Bram1，所以选Bram2的出数据作为一行结束的标志
+    //一开始只有一个计数器，但是由于有两个数据Bram，所以必须实现两个数据Bram计数器
     val Bram_Out_Cnt=WaCounter(io.mData2.ready&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY, log2Up(Config.LTY_DATA_BRAM_B_DEPTH), Config.LTY_DATA_BRAM_B_DEPTH-1)//创建输出数据的列计数器
     val Bram_Out_Row_Cnt=WaCounter(Bram_Out_Cnt.valid, log2Up(Config.LTY_ROW_NUM/2),Config.LTY_ROW_NUM/2-1)//创建输出行数计数器,记得除2，因为并行度是2
     val INIT_CNT=WaCounter(Fsm.currentState === LTY_ENUM.INIT, 3, 5)//初始化计数器,数五拍
@@ -161,9 +176,15 @@ class Lty_Mark_Gen extends Component{//连通域标记
         FeatureMem(i).io.dina:=io.sData.payload//4个Bram的写数据
         FeatureMem(i).io.wea:=True
     }//读数据=================================
+    val FeatureMem_02_Cnt=WaCounter(io.mData1.ready&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY, log2Up(Config.LTY_DATA_BRAM_B_DEPTH), Config.LTY_DATA_BRAM_B_DEPTH-1)
     for(i<-0 to 3){
-        FeatureMem(i).io.addrb:=Bram_Out_Cnt.count//读地址待处理
+        if(i%2==0){//0,2,第一行
+            FeatureMem(i).io.addrb:=FeatureMem_02_Cnt.count//
+        }else{//1,3，第二行
+            FeatureMem(i).io.addrb:=Bram_Out_Cnt.count//
+        }
         FeatureMem(i).io.enb:=True//以后有需要在处理
+
     }
     io.mData1.payload:=Bram_Read_Chose?FeatureMem(2).io.doutb|FeatureMem(0).io.doutb//输出数据选择器
     io.mData2.payload:=Bram_Read_Chose?FeatureMem(3).io.doutb|FeatureMem(1).io.doutb//输出数据选择器
@@ -186,15 +207,106 @@ class Lty_Mark_Gen extends Component{//连通域标记
 
     // io.mData1.valid:=RegNext(Data_Out_Flag)
     // io.mData2.valid:=RegNext(Data_Out_Flag)
+//最后还是决定将连通域标记矩阵放在这里面，因为出去的pixel应该和上标记一一对应
+/*
+现在需要决定连通域标记矩阵的调度
+    比如第一行数据Bram出去的时候，跟着出去的还有Up_Mark_Mem1对应的标记，也就是说，认为Up_Mark_Mem1是第一行上面的那个标记矩阵
+    但是，第一行数据被标记后，需要更新标记矩阵，那么，第一行的标记应该被写回到Up_Mark_Mem1
+    这也是为什么Up_Mark_Mem1的读写地址不同的原因
+    总结：
+        FeatureMem0是FeatureMem1的理论上一行
+        Feature0的标记写入Up_Mark_Mem2
+        Feature1的标记写入Up_Mark_Mem1
+⭐：关于读写冲突：
+    首先第一行读出标记，然后写回标记，假如第一行处于23，那么需要向Up_Mark_Mem2的23地址写入，
+    又由于第二行始终慢于第一行，所以读写冲突不会产生？22、9、16/23:22
+    似乎没啥问题。。。。。
+*/
+    val Up_Mark_Mem1=Mem(UInt(Config.LTY_MARK_BRAM_WIDTH bits),wordCount=Config.LTY_MARK_BRAM_DEPTH)//第一行的上标记矩阵
+    Up_Mark_Mem1.write(io.Mark2_In_Addr,io.Mark2_In,io.Mark2_In_Valid)//写地址,写数据,写使能都延迟了一拍
+    val Up_Mark_Mem2=Mem(UInt(Config.LTY_MARK_BRAM_WIDTH bits),wordCount=Config.LTY_MARK_BRAM_DEPTH)//第二行的上标记矩阵
+    Up_Mark_Mem2.write(io.Mark1_In_Addr,io.Mark1_In,io.Mark1_In_Valid)//写地址,写数据,写使能都延迟了一拍    
+
+    io.Mark1Up_Out:=Up_Mark_Mem1.readAsync(FeatureMem_02_Cnt.count)
+    io.Mark2Up_Out:=Up_Mark_Mem2.readAsync(Bram_Out_Cnt.count)
 
 }
 object MARK_ENUM extends SpinalEnum(defaultEncoding = binaryOneHot) {
-  val IDLE, INIT, GET_DATA,COND1,COND2,COND3 = newElement
+    //启动信号是非常有必要的，比如第一行启动后，需要处理至少5个点后才能启动第二行的处理
+    //也就是说，多并行度下，第二行的处理必须慢第一行5个标记点处理的时间
+  val IDLE, INIT, GET_DATA,GEN_NEW_LTY,UP1_COND,UP0_LEFT1,UPDATE_LTY= newElement
     /*三种条件，
-        COND1：  上，左都为0---新建一个连通域
-        COND2:  上不为0---处理左边四个点
-        COND3：上为0，左不为0---单独处理当前点  
+        GEN_NEW_LTY  上，左都为0---新建一个连通域,生成新的连通域
+        UP1_COND:  上不为0---处理左边四个点，Up is 1 condition
+        UP0_LEFT1：上为0，左不为0---单独处理当前点  
     */    
+}
+class Mark_Fsm(start:Bool) extends Area{
+    val currentState = Reg(MARK_ENUM()) init MARK_ENUM.IDLE
+    val nextState = MARK_ENUM()
+    currentState := nextState
+
+    val Init_End=Bool()
+    val Get_Data_End=Bool()
+    val Row_End=Bool()//一行数据被标记完了
+
+    val Gen_New_Lty=Bool()
+    val Gen_New_Lty_End=Bool()//这个意思是构建完了新的连通域，也就是说Lty_Num加1，并且当前Lty_Num+1对应的连通域的参数也计算完了，等待写回了
+    val Up1_Cond=Bool()
+    val Up1_Cond_End=Bool()
+    val Up0_Left1=Bool()
+
+    val Update_Lty_End=Bool()
+
+    switch(currentState){
+        is(MARK_ENUM.IDLE){
+            when(start){
+                nextState:=MARK_ENUM.INIT
+            }otherwise{
+                nextState:=MARK_ENUM.IDLE
+            }
+        }
+        is(MARK_ENUM.INIT){
+            when(Init_End){
+                nextState:=MARK_ENUM.GET_DATA
+            }otherwise{
+                nextState:=MARK_ENUM.INIT
+            }
+        }
+        is(MARK_ENUM.GET_DATA){
+            when(Row_End){//一行标记完了，进入Idle状态
+                nextState:=MARK_ENUM.IDLE 
+            }elsewhen(Get_Data_End){
+                when(Up1_Cond){
+                    nextState:=MARK_ENUM.UP1_COND
+                }elsewhen(Up0_Left1){
+                    nextState:=MARK_ENUM.UP0_LEFT1
+                }otherwise{//Gen_New_Lty
+                    nextState:=MARK_ENUM.GEN_NEW_LTY
+                }
+            }otherwise{
+                nextState:=MARK_ENUM.GET_DATA
+            }
+        }
+        is(MARK_ENUM.GEN_NEW_LTY){
+            when(Gen_New_Lty_End){
+                nextState:=MARK_ENUM.GET_DATA
+            }otherwise{
+                nextState:=MARK_ENUM.GEN_NEW_LTY
+            }
+        }
+        
+    }
+}
+class Mark_Mem(Mark_Mem_Num:Int) extends Component{
+    //连通域标记矩阵，单独构成一个模块
+    val Config=MemConfig()
+    //创建标记矩阵---并行度为2，所以也得要两个Ram作为上标记矩阵=====================================
+
+    val io=new Bundle{
+        val Pixel_Pos=in UInt(log2Up(Config.LTY_MARK_BRAM_DEPTH) bits)//需要拿到的标记点坐标
+    }
+
 }
 class Lty_Mark_Sub_Module extends Component{//标记子模块
     val Config=MemConfig()
@@ -207,8 +319,7 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         val Left_Mark_Valid=out Vec(Bool())//
     }
     val Pixel_Pos=WaCounter(io.sData.fire,log2Up(Config.LTY_DATA_BRAM_B_DEPTH),Config.LTY_DATA_BRAM_B_WIDTH-1)//当前处理的点的坐标计数器
-    //创建标记矩阵---并行度为2，所以也得要两个Ram作为上标记矩阵=====================================
-    val Up_Mark_Mem1=Mem(UInt(Config.LTY_MARK_BRAM_WIDTH bits),wordCount=Config.LTY_MARK_BRAM_DEPTH)//标记矩阵
+
     //希望单独处理一行的标记
 
     when(io.Up_mark === 0 && io.Left_Mark(0)===0) {//上面和左边都没被标记

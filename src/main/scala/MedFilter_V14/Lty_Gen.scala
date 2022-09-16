@@ -178,8 +178,8 @@ class Lty_Mark_Gen extends Component{//连通域标记
         Row_Cnt_2.clear//每缓存完一行数据都要进行是否是最后一行判断
     }
     when(Fsm.currentState===LTY_ENUM.EXTRACT_LTY){//这里加RegNext的原因：对波形时开头多了一个点结尾少了一个点，待分析
-        io.mData1.valid:=True//添加后面的Fsm.currentState===LTY_ENUM.WAIT_NEXT_READY条件是因为没必要让mValid在连通域提取状态拉高拉低
-        io.mData2.valid:=True
+        io.mData1.valid:=RegNext(io.mData1.ready)//添加后面的Fsm.currentState===LTY_ENUM.WAIT_NEXT_READY条件是因为没必要让mValid在连通域提取状态拉高拉低
+        io.mData2.valid:=RegNext(io.mData2.ready)//这里情况比较特殊，mValid应该由mReady驱动，也就是说，mReady不来的话，mValid不会拉高
     }otherwise{
         io.mData1.valid:=False
         io.mData2.valid:=False

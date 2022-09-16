@@ -130,7 +130,7 @@ class Lty_Mark_Gen extends Component{//连通域标记
     Fsm.Judge2Row_Col_End:=Col_Cnt.valid//缓存完开头两行中的一行
     Fsm.Load_2_Row_End:=Row_Cnt_All.count>1//开头两行被缓存完了，行计数器为2的时候那么就加载完两行了,不能大于等于一，因为加载完第0行后，Row_Cnt就已经是1了
  
-    Fsm.Col_End:=RegNext(Bram_Out_Cnt.valid)//发完了一行数据，也就是发送数据计数器数完了2040，表面上发送完一行，实际上处理完了两行
+    Fsm.Col_End:=Bram_Out_Cnt.valid//发完了一行数据，也就是发送数据计数器数完了2040，表面上发送完一行，实际上处理完了两行
     //RegNext的原因：由于Bram输出慢一拍，所以需要RegNext一下，保证最后一个点也能正确输出
 //一个Bram写选择器，一个Bram读选择器
     val Bram_Read_Chose=Reg(Bool())init(False)//要准确控制才行，是读0，1还是2，3
@@ -140,9 +140,7 @@ class Lty_Mark_Gen extends Component{//连通域标记
     }
    //违背逻辑的原因是避免在导入前两行的时候输出
     //也就是说，在加载第3，4行的时候，输出1，2行，加载1，2行时同理
-    //创建标记矩阵---并行度为2，所以也得要两个Ram作为上标记矩阵=====================================
-    val Up_Mark_Mem1=Mem(UInt(Config.LTY_MARK_BRAM_WIDTH bits),wordCount=Config.LTY_MARK_BRAM_DEPTH)//标记矩阵
-    val Up_Mark_Mem2=Mem(UInt(Config.LTY_MARK_BRAM_WIDTH bits),wordCount=Config.LTY_MARK_BRAM_DEPTH)//标记矩阵
+
 
 //建立四个数据缓存Bram=======================================================================
     val Wr_En=Vec(Bool(),4)//循环写
@@ -178,28 +176,40 @@ class Lty_Mark_Gen extends Component{//连通域标记
     when(Fsm.currentState===LTY_ENUM.JUDGE_LAST_ROW&&(!io.sData.ready)){//为毛线要取个反？我敲，我忘记为啥了
         Row_Cnt_2.clear//每缓存完一行数据都要进行是否是最后一行判断
     }
-    when(Fsm.currentState===LTY_ENUM.EXTRACT_LTY){//这里加RegNext的原因：对波形时开头多了一个点结尾少了一个点，待分析
-        io.mData1.valid:=RegNext(io.mData1.ready)//添加后面的Fsm.currentState===LTY_ENUM.WAIT_NEXT_READY条件是因为没必要让mValid在连通域提取状态拉高拉低
-        io.mData2.valid:=RegNext(io.mData2.ready)//这里情况比较特殊，mValid应该由mReady驱动，也就是说，mReady不来的话，mValid不会拉高
-    }otherwise{
-        io.mData1.valid:=False
-        io.mData2.valid:=False
-    }
+    // when(){//这里加RegNext的原因：对波形时开头多了一个点结尾少了一个点，待分析
+    // }otherwise{
+    //     io.mData1.valid:=False
+    //     io.mData2.valid:=False
+    // }
+    io.mData1.valid:=RegNext(io.mData1.ready&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY)//添加后面的Fsm.currentState===LTY_ENUM.WAIT_NEXT_READY条件是因为没必要让mValid在连通域提取状态拉高拉低
+    io.mData2.valid:=RegNext(io.mData2.ready&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY)//这里情况比较特殊，mValid应该由mReady驱动，也就是说，mReady不来的话，mValid不会拉高
+
     // io.mData1.valid:=RegNext(Data_Out_Flag)
     // io.mData2.valid:=RegNext(Data_Out_Flag)
 
 }
+object MARK_ENUM extends SpinalEnum(defaultEncoding = binaryOneHot) {
+  val IDLE, INIT, GET_DATA,COND1,COND2,COND3 = newElement
+    /*三种条件，
+        COND1：  上，左都为0---新建一个连通域
+        COND2:  上不为0---处理左边四个点
+        COND3：上为0，左不为0---单独处理当前点  
+    */    
+}
 class Lty_Mark_Sub_Module extends Component{//标记子模块
     val Config=MemConfig()
     val io=new Bundle{
+        val sData=slave Stream(UInt(Config.LTY_DATA_BRAM_B_WIDTH bits))//进来的滤波后图片数据点
         val Up_mark=in UInt(16 bits)//上标记
-
         val Left_Mark=in Vec(UInt(16 bits),4)//左边的四个标记点
         val Lty_Total_NUm=in UInt(16 bits)//连通域总数量
         val Mark_Out=out UInt(16 bits)//输出标记点
         val Left_Mark_Valid=out Vec(Bool())//
     }
-
+    val Pixel_Pos=WaCounter(io.sData.fire,log2Up(Config.LTY_DATA_BRAM_B_DEPTH),Config.LTY_DATA_BRAM_B_WIDTH-1)//当前处理的点的坐标计数器
+    //创建标记矩阵---并行度为2，所以也得要两个Ram作为上标记矩阵=====================================
+    val Up_Mark_Mem1=Mem(UInt(Config.LTY_MARK_BRAM_WIDTH bits),wordCount=Config.LTY_MARK_BRAM_DEPTH)//标记矩阵
+    //希望单独处理一行的标记
 
     when(io.Up_mark === 0 && io.Left_Mark(0)===0) {//上面和左边都没被标记
         io.Mark_Out:=io.Lty_Total_NUm+1//那么这是一个新的连通域

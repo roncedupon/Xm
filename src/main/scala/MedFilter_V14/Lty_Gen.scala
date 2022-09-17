@@ -3,6 +3,7 @@ import spinal.core._
 import spinal.lib.slave
 import Archive.WaCounter
 import spinal.lib.master
+import spinal.lib.Delay
 
 class Lty_Bram extends BlackBox{//黑盒，入32bit，出16 bit
     val Config=MemConfig()//浮点乘法器
@@ -355,6 +356,22 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         val Sign_Flag=in Bool()//有无符号位
         val Temp_Back_Thrd=in UInt(16 bits)//由于进来的图片像素点都是整形，而Temp_Back_Thrd的实际值带小数，所以可以将Temp_Back_Thrd向上取整
         //为了防止pixel=70，Temp_Back_Thrd=69.9（向上取整后为70）取伪的情况，第一个判断应该使用大于等于
+
+
+        //写回计算结果相关，6个参数
+        //我们只需要算出来需要累加的结果，然后再发过去，累加操作让接受模块做，所以在此不考虑读冲突，只考虑写冲突
+        // val Lty_Para1_mData=out UInt(Config.LTY_PARAM1_MEM_WIDTH bits)
+        // val Lty_Para2_mData=out UInt(Config.LTY_PARAM2_MEM_WIDTH bits)
+        // val Lty_Para3_mData=out UInt(Config.LTY_PARAM3_MEM_WIDTH bits)
+        // val Lty_Para4_mData=out UInt(Config.LTY_PARAM4_MEM_WIDTH bits)
+        // val Lty_Para5_mData=out UInt(Config.LTY_PARAM5_MEM_WIDTH bits)//其实6和5一样，不知道还要不要再多开一个。。。
+        // val Lty_Para6_mData=out UInt(Config.LTY_PARAM6_MEM_WIDTH bits)
+        val Lty_Para_mReady=in Bool()//其实接受方那边是一直准备好了的，但是，为了处理两行同时产生新的连通域的情况，需要有一个先后处理顺序
+        //如果一二行的Valid同时拉高
+        //不过此时MEM一次只能处理一个点的数据
+            //第二行的mReady应该 是！lineValid&&line2Valid
+            //第一行的mReady就一直拉高就行了
+        val Lty_Para_mValid=out Bool()
     }
     io.Mark_Out:=0
     noIoPrefix()
@@ -376,7 +393,7 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
     val Left_Mark=Vec(Reg(UInt(Config.LTY_MARK_BRAM_WIDTH bits))init(0),4)//创建四个移位寄存器，代表左边的四个标记点
     val Shift_Mark_In=UInt(Config.LTY_MARK_BRAM_WIDTH bits)
     val Shift_Start=Bool()//启动移位寄存器
-    Shift_Start:=True
+    Shift_Start:=False
     Shift_Mark_In:=0
 //     for(i<-0 to 2){
 //         when(Shift_Start){
@@ -422,7 +439,7 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
     Fsm.Up0_Left1:=False//进入上为0左不为0状态
     Fsm.Up1_Cond:=False//进入上不为0状态，处理左边四个点
 
-    Fsm.Gen_New_Lty_End:=False//进入生成新连通域状态
+    // Fsm.Gen_New_Lty_End:=False//进入生成新连通域状态
     Fsm.Up0_Left1_End:=False//进入上为0左不为0状态
     Fsm.Up1_Cond_End:=False//进入上不为0状态，处理左边四个点
 
@@ -430,6 +447,7 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         io.Mark_Out:=io.Lty_Total_NUm+1//那么这是一个新的连通域、
         Shift_Mark_In:=io.Lty_Total_NUm+1
         Fsm.Gen_New_Lty:=True//进入生成新连通域状态
+        Shift_Start:=True//更新移位寄存器的值供下一个点
         // Fsm.Up0_Left1:=False//进入上为0左不为0状态
         // Fsm.Up1_Cond:=False//进入上不为0状态，处理左边四个点
     }.elsewhen(io.Up_mark === 0 && Left_Mark(0)=/=0) {//上面没被标记，左边被标记了,那么当前点的标记就应该和左边点标记一样
@@ -446,7 +464,28 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         Fsm.Up1_Cond:=True//进入上不为0状态，处理左边四个点                
     }        
     
-//  
+//生成新连通域(上，左都为0)==============================================================================
+    Fsm.Gen_New_Lty_End:=io.Lty_Para_mReady&&io.Lty_Para_mValid//修改原因：需要数据发过去才能退出这个状态Delay(Fsm.currentState===MARK_ENUM.GEN_NEW_LTY,Config.DSP_PIPELINE_STAGE)//控制状态结束
+    when(Fsm.currentState===MARK_ENUM.GEN_NEW_LTY){//这部分代码主要处理状态结束
+        //首先得进入生成新连通域状态
+        //在这一状态下，标记相关操作
+        //向当前Pixel_Cnt-1对应的mark Mem写入Lty_Num+1  只操作独立的mem，无写冲突
+        io.Mark_Out_Valid:=True
+        //更新移位寄存器的值供下一轮使用
+    }
+    io.Lty_Para_mValid:=Delay(Fsm.currentState===MARK_ENUM.GEN_NEW_LTY,Config.DSP_PIPELINE_STAGE)&&Fsm.currentState===MARK_ENUM.GEN_NEW_LTY
+//上为0，左不为0
+    Fsm.Up0_Left1_End:=io.Lty_Para_mReady&&io.Lty_Para_mValid
+    when(Fsm.currentState===MARK_ENUM.UP0_LEFT1){
+        io.Mark_Out_Valid:=True
+    }
+    io.Lty_Para_mValid:=Delay(Fsm.currentState===MARK_ENUM.UP0_LEFT1,Config.DSP_PIPELINE_STAGE)&&Fsm.currentState===MARK_ENUM.UP0_LEFT1
+//上不为0，同时处理左四个点
+    when(Fsm.currentState===MARK_ENUM.UP1_COND){
+        
+    }
+
+
 
 
 //输出的要更新的标记点握手信号处理============================================================
@@ -456,6 +495,7 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         io.Mark_Out_Valid:=False
     }
     io.Mark_Out_Addr:=Pixel_In_Cnt.count-1//本来是第0个点，但是拿到一个有效点后，count变成了1、但是需要关系的是0的地址，所以要减去一
+
 //sData握手信号控制
     io.sData.ready:=Fsm.currentState===MARK_ENUM.GET_DATA//只要在拿数据状态下，sReady一之拉高，直到拿到一个数据
 }

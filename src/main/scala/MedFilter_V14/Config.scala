@@ -40,7 +40,14 @@ case class MemConfig() {
     val LTY_DATA_BRAM_B_DEPTH=2040//滤波后图片数据B口的缓存深度
         //乘法器相关
     val DSP_PIPELINE_STAGE=5//乘法器流水线
-
+    val SHIFT_LEFT=10//左移10位tempBackMeam的相对误差是0.4%，应该能用
+        //连通域计算后的6参数存储,不用BRAM了，直接使用spinal的mem
+    val LTY_PARAM1_MEM_WIDTH=16//第一个参数：像素值
+    val LTY_PARAM2_MEM_WIDTH=64//LtyData(ImgMark(i,j),1) = LtyData(ImgMark(i,j),1) + 1 ;% size
+    val LTY_PARAM3_MEM_WIDTH=64//LtyData(ImgMark(i,j),2) = LtyData(ImgMark(i,j),2) + double(ImgFilter(i,j)-temp_back_mean)^2*(i) ;% FZX
+    val LTY_PARAM4_MEM_WIDTH=64//
+    val LTY_PARAM5_MEM_WIDTH=64
+    val LTY_PARAM6_MEM_WIDTH=64
     //连通域后处理
     val STARPOINT_THRD=5//连通域所占的最小像素点
     val PARA6_THRD_WIDTH=46//SNR_thrd*temp_back_std*2^32---所以这里的值应该是SNR_thrd*temp_back_std放大2^32之后的值

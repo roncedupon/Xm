@@ -33,13 +33,13 @@ case class MemConfig() {
         //标记矩阵相关
     val LTY_MARK_BRAM_DEPTH=LTY_COL_NUM//标记矩阵的深度，也不用加一
     val LTY_MARK_BRAM_WIDTH=10//标记矩阵的数据位宽（1024）
-
         //滤波后的图片缓存
     val LTY_DATA_BRAM_A_WIDTH=64//二并行度，输入是32 bit，输出是16 bit
     val LTY_DATA_BRAM_B_WIDTH=16//出16 bit
     val LTY_DATA_BRAM_A_DEPTH=510 //滤波后图片数据A口的缓存深度
     val LTY_DATA_BRAM_B_DEPTH=2040//滤波后图片数据B口的缓存深度
-
+        //乘法器相关
+    val DSP_PIPELINE_STAGE=5//乘法器流水线
 
     //连通域后处理
     val STARPOINT_THRD=5//连通域所占的最小像素点

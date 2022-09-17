@@ -234,7 +234,7 @@ class Lty_Mark_Gen extends Component{//连通域标记
 object MARK_ENUM extends SpinalEnum(defaultEncoding = binaryOneHot) {
     //启动信号是非常有必要的，比如第一行启动后，需要处理至少5个点后才能启动第二行的处理
     //也就是说，多并行度下，第二行的处理必须慢第一行5个标记点处理的时间
-  val IDLE, INIT, GET_DATA,GEN_NEW_LTY,UP1_COND,UP0_LEFT1,UPDATE_LTY= newElement
+  val IDLE, INIT, GET_DATA,GEN_NEW_LTY,COND_CHOSE,UP1_COND,UP0_LEFT1= newElement
     /*三种条件，
         GEN_NEW_LTY  上，左都为0---新建一个连通域,生成新的连通域
         UP1_COND:  上不为0---处理左边四个点，Up is 1 condition
@@ -251,12 +251,19 @@ class Mark_Fsm(start:Bool) extends Area{
     val Row_End=Bool()//一行数据被标记完了
 
     val Gen_New_Lty=Bool()
+
     val Gen_New_Lty_End=Bool()//这个意思是构建完了新的连通域，也就是说Lty_Num加1，并且当前Lty_Num+1对应的连通域的参数也计算完了，等待写回了
+
+   
     val Up1_Cond=Bool()
+
     val Up1_Cond_End=Bool()
+
+    
     val Up0_Left1=Bool()
 
-    val Update_Lty_End=Bool()
+    val Up0_Left1_End=Bool()
+
 
     switch(currentState){
         is(MARK_ENUM.IDLE){
@@ -268,7 +275,7 @@ class Mark_Fsm(start:Bool) extends Area{
         }
         is(MARK_ENUM.INIT){
             when(Init_End){
-                nextState:=MARK_ENUM.GET_DATA
+                nextState:=MARK_ENUM.IDLE
             }otherwise{
                 nextState:=MARK_ENUM.INIT
             }
@@ -276,15 +283,20 @@ class Mark_Fsm(start:Bool) extends Area{
         is(MARK_ENUM.GET_DATA){
             when(Row_End){//一行标记完了，进入Idle状态
                 nextState:=MARK_ENUM.IDLE 
-            }elsewhen(Get_Data_End){
-                when(Up1_Cond){
-                    nextState:=MARK_ENUM.UP1_COND
-                }elsewhen(Up0_Left1){
-                    nextState:=MARK_ENUM.UP0_LEFT1
-                }otherwise{//Gen_New_Lty
-                    nextState:=MARK_ENUM.GEN_NEW_LTY
-                }
+            }elsewhen(Get_Data_End){//也就是sData.fire拉高了
+                nextState:=MARK_ENUM.COND_CHOSE//进入三个条件选择状态
             }otherwise{
+                nextState:=MARK_ENUM.GET_DATA
+            }
+        }
+        is(MARK_ENUM.COND_CHOSE){//多一个状态就多一个状态吧。。。
+            when(Up1_Cond){
+                nextState:=MARK_ENUM.UP1_COND
+            }elsewhen(Up0_Left1){
+                nextState:=MARK_ENUM.UP0_LEFT1
+            }elsewhen(Gen_New_Lty){//Gen_New_Lty
+                nextState:=MARK_ENUM.GEN_NEW_LTY
+            }otherwise{//这一条件就是pixel小于阈值，直接不更新当前点，跳过
                 nextState:=MARK_ENUM.GET_DATA
             }
         }
@@ -295,50 +307,169 @@ class Mark_Fsm(start:Bool) extends Area{
                 nextState:=MARK_ENUM.GEN_NEW_LTY
             }
         }
+        is(MARK_ENUM.UP1_COND){
+            when(Up1_Cond_End){
+                nextState:=MARK_ENUM.GET_DATA
+            }otherwise{
+                nextState:=MARK_ENUM.UP1_COND
+            }
+        }
+        is(MARK_ENUM.UP0_LEFT1){
+            when(Up0_Left1_End){
+                nextState:=MARK_ENUM.GET_DATA
+            }otherwise{
+                nextState:=MARK_ENUM.UP0_LEFT1
+            }
+        }
+    
         
     }
 }
-class Mark_Mem(Mark_Mem_Num:Int) extends Component{
-    //连通域标记矩阵，单独构成一个模块
-    val Config=MemConfig()
-    //创建标记矩阵---并行度为2，所以也得要两个Ram作为上标记矩阵=====================================
+// class Mark_Mem(Mark_Mem_Num:Int) extends Component{
+//     //连通域标记矩阵，单独构成一个模块
+//     val Config=MemConfig()
+//     //创建标记矩阵---并行度为2，所以也得要两个Ram作为上标记矩阵=====================================
 
-    val io=new Bundle{
-        val Pixel_Pos=in UInt(log2Up(Config.LTY_MARK_BRAM_DEPTH) bits)//需要拿到的标记点坐标
-    }
+//     val io=new Bundle{
+//         val Pixel_Pos=in UInt(log2Up(Config.LTY_MARK_BRAM_DEPTH) bits)//需要拿到的标记点坐标
+//     }
 
-}
+// }
 class Lty_Mark_Sub_Module extends Component{//标记子模块
     val Config=MemConfig()
     val io=new Bundle{
+        val start=in Bool()
         val sData=slave Stream(UInt(Config.LTY_DATA_BRAM_B_WIDTH bits))//进来的滤波后图片数据点
-        val Up_mark=in UInt(16 bits)//上标记
-        val Left_Mark=in Vec(UInt(16 bits),4)//左边的四个标记点
-        val Lty_Total_NUm=in UInt(16 bits)//连通域总数量
-        val Mark_Out=out UInt(16 bits)//输出标记点
-        val Left_Mark_Valid=out Vec(Bool())//
+        val Up_mark=in UInt(Config.LTY_MARK_BRAM_WIDTH bits)//上标记
+
+        val Lty_Total_NUm=in UInt(Config.LTY_MARK_BRAM_WIDTH bits)//连通域总数量
+
+        val Mark_Out=out UInt(Config.LTY_MARK_BRAM_WIDTH bits)//输出的当前点的标记
+        val Mark_Out_Addr=out UInt(log2Up(Config.LTY_MARK_BRAM_DEPTH) bits)//其实就是当前点所处的列
+        val Mark_Out_Valid=out Bool()//写数据和写地址有效，更新连通域标记矩阵
+
+
+
+        //阈值相关：
+        val Temp_Back_Mean=in UInt(16 bits)//左移32Bit需要32 bit位宽---不过目前按左移12、13bit来处理的
+        val Sign_Flag=in Bool()//有无符号位
+        val Temp_Back_Thrd=in UInt(16 bits)//由于进来的图片像素点都是整形，而Temp_Back_Thrd的实际值带小数，所以可以将Temp_Back_Thrd向上取整
+        //为了防止pixel=70，Temp_Back_Thrd=69.9（向上取整后为70）取伪的情况，第一个判断应该使用大于等于
     }
-    val Pixel_Pos=WaCounter(io.sData.fire,log2Up(Config.LTY_DATA_BRAM_B_DEPTH),Config.LTY_DATA_BRAM_B_WIDTH-1)//当前处理的点的坐标计数器
+    io.Mark_Out:=0
+    noIoPrefix()
+//状态机相关=============================================================================================
+    val Fsm=new Mark_Fsm(io.start)
+    val Init_Cnt=WaCounter(Fsm.currentState === MARK_ENUM.INIT, 3, 5)//初始化计数器,数五拍
+    Fsm.Init_End:=Init_Cnt.valid
+    //进数据控制相关---这里的计数器没有减一，要注意⭐
+    val Pixel_In_Cnt=WaCounter(io.sData.fire,log2Up(Config.LTY_DATA_BRAM_B_DEPTH),Config.LTY_DATA_BRAM_B_WIDTH)//当前处理的点的坐标计数器
+        /*这里的计数器原理：首先状态位于拿数据状态，Pixel_Pos从0开始数
+        当sData.fire拉高，进来一个滤波后图片数据和当前点的上标记，状态跳转到之后的状态，然后Pixel_Pos拉高
+        假如只收一个数据，sData.fire拉高后下一个周期Pixel_Pos Valid也拉高，下一次拿数据状态，Pixel_Pos=1，那么这时应该退出去了
+        
+        反正这里不能用减一的原因是这里是先拿点再判断，而前面减一是先判断再拿点⭐
+        */
+    Fsm.Row_End:=Pixel_In_Cnt.valid
+    Fsm.Get_Data_End:=io.sData.fire&&io.sData.payload>=io.Temp_Back_Thrd//拿到一个数据结束信号拉高并同时启动三个子条件的判断，如果三个子条件都不满足，那么继续拿数据
+//连通域条件判断相关=======================================================================================
+    val Left_Mark=Vec(Reg(UInt(Config.LTY_MARK_BRAM_WIDTH bits))init(0),4)//创建四个移位寄存器，代表左边的四个标记点
+    val Shift_Mark_In=UInt(Config.LTY_MARK_BRAM_WIDTH bits)
+    val Shift_Start=Bool()//启动移位寄存器
+    Shift_Start:=True
+    Shift_Mark_In:=0
+//     for(i<-0 to 2){
+//         when(Shift_Start){
+//             Left_Mark(i+1):=Left_Mark(i)
+//         }
+//     }
+    when(Shift_Start){
+        Left_Mark(0):=Shift_Mark_In
+    }otherwise{
+        Left_Mark(0):=Left_Mark(0)
+    }
+    when(Shift_Start){
+        Left_Mark(1):=Left_Mark(0)
+    }otherwise{
+        Left_Mark(1):=Left_Mark(1)
+    }
+    when(Shift_Start){
+        Left_Mark(2):=Left_Mark(1)
+    }otherwise{
+        Left_Mark(2):=Left_Mark(2)
+    }
+    when(Shift_Start){
+        Left_Mark(3):=Left_Mark(2)
+    }otherwise{
+        Left_Mark(3):=Left_Mark(3)
+    }
+    /*关于连通域数量加一的问题
+        有一种可能：第一行连通域和第二行连通域同时满足创建新连通域的条件，那么连通域要加2
+        现在的问题是如何处理这种情况？
+        还有一种情况，如果第一行在最后一个点创建了一个新连通域，那么第二行之前处理的所有新连通域标记都要作废了。。。(问题不大，已解决)
 
-    //希望单独处理一行的标记
+        又有一种情况：⭐⭐⭐⭐⭐⭐
+        如果上下两行同时创建了两个新连通域，怎么更新标记矩阵以及怎么更新Lty_Data?
+            也就是上下两行要同时更新连通域，怎么处理
+                解决方案：读Lty_Data_Mem时给一个Valid信号，和switch选择开关
+    
+    */
+    // when(Fsm.currentState===MARK_ENUM.COND_CHOSE){//首先应该进入拿数据状态
+    //     //然后拿像素点和阈值比较
+        
+    // }
+    Fsm.Gen_New_Lty:=False//进入生成新连通域状态
+    Fsm.Up0_Left1:=False//进入上为0左不为0状态
+    Fsm.Up1_Cond:=False//进入上不为0状态，处理左边四个点
 
-    when(io.Up_mark === 0 && io.Left_Mark(0)===0) {//上面和左边都没被标记
-        io.Mark_Out:=io.Lty_Total_NUm+1//那么这是一个新的连通域
-    }.elsewhen(io.Up_mark === 0 && io.Left_Mark(0)=/=0) {//上面没被标记，左边被标记了,那么当前点的标记就应该和左边点标记一样
-        io.Mark_Out:=io.Left_Mark(0)
-    }.elsewhen(io.Up_mark =/= 0 && io.Left_Mark(0) === 0) {//上面点被标记，左边点没被标记，将当前点标记为上面的点
+    Fsm.Gen_New_Lty_End:=False//进入生成新连通域状态
+    Fsm.Up0_Left1_End:=False//进入上为0左不为0状态
+    Fsm.Up1_Cond_End:=False//进入上不为0状态，处理左边四个点
+
+    when(io.Up_mark === 0 && Left_Mark(0)===0) {//上面和左边都没被标记
+        io.Mark_Out:=io.Lty_Total_NUm+1//那么这是一个新的连通域、
+        Shift_Mark_In:=io.Lty_Total_NUm+1
+        Fsm.Gen_New_Lty:=True//进入生成新连通域状态
+        // Fsm.Up0_Left1:=False//进入上为0左不为0状态
+        // Fsm.Up1_Cond:=False//进入上不为0状态，处理左边四个点
+    }.elsewhen(io.Up_mark === 0 && Left_Mark(0)=/=0) {//上面没被标记，左边被标记了,那么当前点的标记就应该和左边点标记一样
+        io.Mark_Out:=Left_Mark(0)//将当前点的标记点更新为左标记点
+        Shift_Mark_In:=Left_Mark(0)
+        // Fsm.Gen_New_Lty:=False//进入生成新连通域状态
+        Fsm.Up0_Left1:=True//进入上为0左不为0状态
+        // Fsm.Up1_Cond:=False//进入上不为0状态，处理左边四个点
+    }.elsewhen(io.Up_mark =/= 0 && Left_Mark(0) === 0) {//上面点被标记，左边点没被标记，将当前点标记为上面的点
         io.Mark_Out:=io.Up_mark
-        for(i<-0 to 3){
-            io.Left_Mark_Valid(i):=(io.Left_Mark(i)===io.Up_mark)?True|False
-        }
-    }
+        Shift_Mark_In:=io.Up_mark
+        // Fsm.Gen_New_Lty:=False//进入生成新连通域状态
+        // Fsm.Up0_Left1:=False//进入上为0左不为0状态
+        Fsm.Up1_Cond:=True//进入上不为0状态，处理左边四个点                
+    }        
+    
+//  
 
+
+//输出的要更新的标记点握手信号处理============================================================
+    when(Fsm.currentState===MARK_ENUM.GEN_NEW_LTY||Fsm.currentState===MARK_ENUM.UP0_LEFT1||Fsm.currentState===MARK_ENUM.UP1_COND){
+        io.Mark_Out_Valid:=True
+    }otherwise{
+        io.Mark_Out_Valid:=False
+    }
+    io.Mark_Out_Addr:=Pixel_In_Cnt.count-1//本来是第0个点，但是拿到一个有效点后，count变成了1、但是需要关系的是0的地址，所以要减去一
+//sData握手信号控制
+    io.sData.ready:=Fsm.currentState===MARK_ENUM.GET_DATA//只要在拿数据状态下，sReady一之拉高，直到拿到一个数据
 }
+
+
 class Lty_Para_Accu extends Component{
     //连通域参数累加
 }
 
+
+
+
 object LtyGen extends App { 
     val verilog_path="./testcode_gen/Lty_Gen" 
-   SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Lty_Mark_Gen)
+//    SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Lty_Mark_Gen)
+   SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Lty_Mark_Sub_Module)
 }

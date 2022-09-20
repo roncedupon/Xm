@@ -43,7 +43,7 @@ case class LTY_FSM(start: Bool) extends Area {
 
   val Init_End=Bool()
   val last_Row = Bool()  //是否为最后一行
-  val Row_2_End=Bool()//前两行加载完
+
   val Col_End=Bool()//输出完一行,这里要注意，这是输出完一行的意思
   val Load_2_Row_End=Bool()//加载完两行
 
@@ -137,7 +137,7 @@ class Lty_Feature_Cache extends Component{//连通域标记
     val Bram_Out_Cnt=WaCounter(io.mData2.ready&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY, log2Up(Config.LTY_DATA_BRAM_B_DEPTH), Config.LTY_DATA_BRAM_B_DEPTH-1)//创建输出数据的列计数器
     val Bram_Out_Row_Cnt=WaCounter(Bram_Out_Cnt.valid, log2Up(Config.LTY_ROW_NUM/2),Config.LTY_ROW_NUM/2-1)//创建输出行数计数器,记得除2，因为并行度是2
     val INIT_CNT=WaCounter(Fsm.currentState === LTY_ENUM.INIT, 3, 5)//初始化计数器,数五拍
-    val Row_Cnt_All=WaCounter(Col_Cnt.valid,log2Up(Config.LTY_ROW_NUM),Config.LTY_ROW_NUM-1)//行计数器
+    val Row_Cnt_All=WaCounter(Col_Cnt.valid,log2Up(Config.LTY_ROW_NUM),Config.LTY_ROW_NUM-1)//输入行计数器
     val Row_Cnt_2=WaCounter(Col_Cnt.valid,2,2)//缓存两行计数器，它的值一直是0，1，2，不可能是3，因为当Row_Cnt_2===2时，sReady拉低，不会再进数据
     //然后等输出完两行，进入最后一行判断，Row_Cnt_2被reset
     val Bram_Write_Choose=WaCounter(Col_Cnt.valid,log2Up(4),3)//0，1，2，3循环写
@@ -194,7 +194,7 @@ class Lty_Feature_Cache extends Component{//连通域标记
 //控制数据输入输出
 
 
-    io.sData.ready:=(Fsm.currentState=/=LTY_ENUM.IDLE||Fsm.currentState=/=LTY_ENUM.INIT)&&Row_Cnt_2.count<2//待处理
+    io.sData.ready:=((Fsm.currentState=/=LTY_ENUM.IDLE)&&(Fsm.currentState=/=LTY_ENUM.INIT))&&Row_Cnt_2.count<2//待处理
     //按道理说，只要另外两个Bram没满，任何时候都能接受数据
     when(Fsm.currentState===LTY_ENUM.JUDGE_LAST_ROW&&(!io.sData.ready)){//为毛线要取个反？我敲，我忘记为啥了
         Row_Cnt_2.clear//每缓存完一行数据都要进行是否是最后一行判断
@@ -659,11 +659,48 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
     }elsewhen(Lty_Mark_Up.io.New_Lty_Gen||Lty_Mark_Down.io.New_Lty_Gen){//只有一个连通域生成
         Total_Num_Reg:=Total_Num_Reg+1
     }
+}
+class Only_Mark extends Component{//整合图片缓存模块和标记模块
+    val Lty_Mark_Up=new Lty_Mark_Sub_Module
+    val Config=MemConfig()
+    val io=new Bundle{
+        val sData=slave Stream(UInt(Config.LTY_DATA_BRAM_B_WIDTH bits))//进来的数据
+        val start=in Bool()//lty计算启动信号
+        val Mark_in=in UInt(9 bits)
+        val Temp_Back_Mean=in UInt(16 bits)//左移32Bit需要32 bit位宽---不过目前按左移12、13bit来处理的(仿真用左移10位)
+        val Sign_Flag=in Bool()//有无符号位
+        val Temp_Back_Thrd=in UInt(16 bits)//由于进来的图片像素点都是整形，而Temp_Back_Thrd的实际值带小数，所以可以将Temp_Back_Thrd向上取整
+    }
+    noIoPrefix()
 
+    val Total_Num_Reg=Reg(UInt(log2Up(Config.LTY_PARAM_MEM_DEPTH) bits))init(0)//创建连通域计数器
+    when(io.start){
+        Total_Num_Reg:=0
+    }otherwise{
+        Total_Num_Reg:=Total_Num_Reg
+    }
+    //Line up=======================================================
+    io.start<>Lty_Mark_Up.io.start
+    Lty_Mark_Up.io.sData<>io.sData
+    Lty_Mark_Up.io.Lty_Total_NUm:=Total_Num_Reg
+
+    Lty_Mark_Up.io.Up_mark<>io.Mark_in
+
+    Lty_Mark_Up.io.Sign_Flag<>io.Sign_Flag
+    Lty_Mark_Up.io.Temp_Back_Mean<>io.Temp_Back_Mean
+    Lty_Mark_Up.io.Temp_Back_Thrd<>io.Temp_Back_Thrd
+
+    Lty_Mark_Up.io.Lty_Para_mReady:=True//待修改
+
+
+
+
+    when(Lty_Mark_Up.io.New_Lty_Gen){
+        Total_Num_Reg:=Total_Num_Reg+1//1
+    }
     
         
 }
-
 object LtyGen extends App { 
     val verilog_path="./testcode_gen/Lty_Gen" 
 //    SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Lty_Mark_Gen)

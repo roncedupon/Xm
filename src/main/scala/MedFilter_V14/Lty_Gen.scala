@@ -104,7 +104,7 @@ case class LTY_FSM(start: Bool) extends Area {
     //前两行连通域提取完后，切换到另外两个Bram，以此往复，从而实现2的并行度
 
 //Recoder：考虑将数据缓存和连通域提取分开
-class Lty_Mark_Gen extends Component{//连通域标记
+class Lty_Feature_Cache extends Component{//连通域标记
     val Config=MemConfig()
     val io=new Bundle{
         val sData=slave Stream(UInt(Config.LTY_DATA_BRAM_A_WIDTH bits))//进来的数据
@@ -123,6 +123,8 @@ class Lty_Mark_Gen extends Component{//连通域标记
         val Mark2_In_Addr=in UInt(log2Up(Config.LTY_MARK_BRAM_DEPTH) bits)//第2行需要更新的点的标记
         val Mark2_In_Valid=in Bool()
         val start=in Bool()//lty计算启动信号
+
+        val strat_Sub_Module=out Bool()//启动下层的连通域标记子模块
     }
     noIoPrefix()
     val Fsm=LTY_FSM(io.start)
@@ -147,7 +149,6 @@ class Lty_Mark_Gen extends Component{//连通域标记
     Fsm.Load_2_Row_End:=Row_Cnt_All.count>1//开头两行被缓存完了，行计数器为2的时候那么就加载完两行了,不能大于等于一，因为加载完第0行后，Row_Cnt就已经是1了
  
     Fsm.Col_End:=Bram_Out_Cnt.valid//发完了一行数据，也就是发送数据计数器数完了2040，表面上发送完一行，实际上处理完了两行
-    //RegNext的原因：由于Bram输出慢一拍，所以需要RegNext一下，保证最后一个点也能正确输出
 //一个Bram写选择器，一个Bram读选择器
     val Bram_Read_Chose=Reg(Bool())init(False)//要准确控制才行，是读0，1还是2，3
     //4个Bram的作用是在计算前两行的时候加载后两行数据
@@ -177,7 +178,7 @@ class Lty_Mark_Gen extends Component{//连通域标记
         FeatureMem(i).io.dina:=io.sData.payload//4个Bram的写数据
         FeatureMem(i).io.wea:=True
     }//读数据=================================
-    val FeatureMem_02_Cnt=WaCounter(io.mData1.ready&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY, log2Up(Config.LTY_DATA_BRAM_B_DEPTH), Config.LTY_DATA_BRAM_B_DEPTH-1)
+    val FeatureMem_02_Cnt=WaCounter(io.mData2.ready&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY, log2Up(Config.LTY_DATA_BRAM_B_DEPTH), Config.LTY_DATA_BRAM_B_DEPTH-1)
     for(i<-0 to 3){
         if(i%2==0){//0,2,第一行
             FeatureMem(i).io.addrb:=FeatureMem_02_Cnt.count//
@@ -230,17 +231,25 @@ class Lty_Mark_Gen extends Component{//连通域标记
 
     io.Mark1Up_Out:=Up_Mark_Mem1.readAsync(FeatureMem_02_Cnt.count)
     io.Mark2Up_Out:=Up_Mark_Mem2.readAsync(Bram_Out_Cnt.count)
-
+    when(Bram_Out_Row_Cnt.count<=0){
+        io.Mark1Up_Out:=0//第一行出去的是0
+    }
+    when(Fsm.currentState===LTY_ENUM.EXTRACT_LTY){
+        io.strat_Sub_Module:=True//在这个状态下就启动连通域提取
+    }otherwise{
+        io.strat_Sub_Module:=False
+    }
 }
 object MARK_ENUM extends SpinalEnum(defaultEncoding = binaryOneHot) {
     //启动信号是非常有必要的，比如第一行启动后，需要处理至少5个点后才能启动第二行的处理
     //也就是说，多并行度下，第二行的处理必须慢第一行5个标记点处理的时间
-  val IDLE, INIT, GET_DATA,GEN_NEW_LTY,COND_CHOSE,UP1_COND,UP0_LEFT1= newElement
+  val IDLE, INIT, GET_DATA,GEN_NEW_LTY,COND_CHOSE,UP1_COND,UP0_LEFT1,UPDATA_LEFT1,UPDATA_LEFT2,UPDATA_LEFT3,UPDATA_LEFT4= newElement
     /*三种条件，
         GEN_NEW_LTY  上，左都为0---新建一个连通域,生成新的连通域
         UP1_COND:  上不为0---处理左边四个点，Up is 1 condition
         UP0_LEFT1：上为0，左不为0---单独处理当前点  
-    */    
+    */ 
+    //后来又添加了四个状态用于处理左边四个点   
 }
 class Mark_Fsm(start:Bool) extends Area{
     val currentState = Reg(MARK_ENUM()) init MARK_ENUM.IDLE
@@ -252,19 +261,20 @@ class Mark_Fsm(start:Bool) extends Area{
     val Row_End=Bool()//一行数据被标记完了
 
     val Gen_New_Lty=Bool()
-
     val Gen_New_Lty_End=Bool()//这个意思是构建完了新的连通域，也就是说Lty_Num加1，并且当前Lty_Num+1对应的连通域的参数也计算完了，等待写回了
 
    
     val Up1_Cond=Bool()
-
     val Up1_Cond_End=Bool()
 
     
     val Up0_Left1=Bool()
-
     val Up0_Left1_End=Bool()
 
+    val UpData_Left1_End=Bool()
+    val UpData_Left2_End=Bool()
+    val UpData_Left3_End=Bool()
+    val UpData_Left4_End=Bool()
 
     switch(currentState){
         is(MARK_ENUM.IDLE){
@@ -276,7 +286,7 @@ class Mark_Fsm(start:Bool) extends Area{
         }
         is(MARK_ENUM.INIT){
             when(Init_End){
-                nextState:=MARK_ENUM.IDLE
+                nextState:=MARK_ENUM.GET_DATA
             }otherwise{
                 nextState:=MARK_ENUM.INIT
             }
@@ -308,13 +318,6 @@ class Mark_Fsm(start:Bool) extends Area{
                 nextState:=MARK_ENUM.GEN_NEW_LTY
             }
         }
-        is(MARK_ENUM.UP1_COND){
-            when(Up1_Cond_End){
-                nextState:=MARK_ENUM.GET_DATA
-            }otherwise{
-                nextState:=MARK_ENUM.UP1_COND
-            }
-        }
         is(MARK_ENUM.UP0_LEFT1){
             when(Up0_Left1_End){
                 nextState:=MARK_ENUM.GET_DATA
@@ -322,8 +325,43 @@ class Mark_Fsm(start:Bool) extends Area{
                 nextState:=MARK_ENUM.UP0_LEFT1
             }
         }
-    
-        
+        is(MARK_ENUM.UP1_COND){
+            when(Up1_Cond_End){
+                nextState:=MARK_ENUM.UPDATA_LEFT1
+            }otherwise{
+                nextState:=MARK_ENUM.UP1_COND
+            }
+        }
+        //左边四个===================================
+        is(MARK_ENUM.UPDATA_LEFT1){
+            when(UpData_Left1_End){
+                nextState:=MARK_ENUM.UPDATA_LEFT2
+            }otherwise{
+                nextState:=MARK_ENUM.UPDATA_LEFT1
+            }
+        }
+        is(MARK_ENUM.UPDATA_LEFT2){
+            when(UpData_Left2_End){
+                nextState:=MARK_ENUM.UPDATA_LEFT3
+            }otherwise{
+                nextState:=MARK_ENUM.UPDATA_LEFT2
+            }
+        }
+        is(MARK_ENUM.UPDATA_LEFT3){
+            when(UpData_Left3_End){
+                nextState:=MARK_ENUM.UPDATA_LEFT4
+            }otherwise{
+                nextState:=MARK_ENUM.UPDATA_LEFT3
+            }
+        }
+        is(MARK_ENUM.UPDATA_LEFT4){
+            when(UpData_Left4_End){
+                nextState:=MARK_ENUM.GET_DATA
+            }otherwise{
+                nextState:=MARK_ENUM.UPDATA_LEFT4
+            }
+        }
+        //============左边四个点end===========================        
     }
 }
 // class Mark_Mem(Mark_Mem_Num:Int) extends Component{
@@ -341,53 +379,52 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
     val io=new Bundle{
         val start=in Bool()
         val sData=slave Stream(UInt(Config.LTY_DATA_BRAM_B_WIDTH bits))//进来的滤波后图片数据点
-        val Up_mark=in UInt(Config.LTY_MARK_BRAM_WIDTH bits)//上标记
-
-        val Lty_Total_NUm=in UInt(Config.LTY_MARK_BRAM_WIDTH bits)//连通域总数量
-
+        val Up_mark=in UInt(Config.LTY_MARK_BRAM_WIDTH bits)//上标记，对应的当前像素点的上标记
+        val Lty_Total_NUm=in UInt(log2Up(Config.LTY_PARAM_MEM_DEPTH) bits)//处理当前点时的连通域总数量，用于更新标记矩阵
         val Mark_Out=out UInt(Config.LTY_MARK_BRAM_WIDTH bits)//输出的当前点的标记
         val Mark_Out_Addr=out UInt(log2Up(Config.LTY_MARK_BRAM_DEPTH) bits)//其实就是当前点所处的列
         val Mark_Out_Valid=out Bool()//写数据和写地址有效，更新连通域标记矩阵
 
-
-
+        val New_Lty_Gen=out Bool()
+        // val J_Out=out UInt(log2Up(Config.LTY_DATA_BRAM_B_DEPTH)bits)//出去的计算值j
+        //不需要单独的J_Out是因为J_Out其实和Mark_Out_Addr一样，并且专门针对左四个点进行了处理⭐计算的时候记得加一
         //阈值相关：
         val Temp_Back_Mean=in UInt(16 bits)//左移32Bit需要32 bit位宽---不过目前按左移12、13bit来处理的
         val Sign_Flag=in Bool()//有无符号位
         val Temp_Back_Thrd=in UInt(16 bits)//由于进来的图片像素点都是整形，而Temp_Back_Thrd的实际值带小数，所以可以将Temp_Back_Thrd向上取整
         //为了防止pixel=70，Temp_Back_Thrd=69.9（向上取整后为70）取伪的情况，第一个判断应该使用大于等于
-
-
-        //写回计算结果相关，6个参数
-        //我们只需要算出来需要累加的结果，然后再发过去，累加操作让接受模块做，所以在此不考虑读冲突，只考虑写冲突
-        // val Lty_Para1_mData=out UInt(Config.LTY_PARAM1_MEM_WIDTH bits)
-        // val Lty_Para2_mData=out UInt(Config.LTY_PARAM2_MEM_WIDTH bits)
-        // val Lty_Para3_mData=out UInt(Config.LTY_PARAM3_MEM_WIDTH bits)
-        // val Lty_Para4_mData=out UInt(Config.LTY_PARAM4_MEM_WIDTH bits)
-        // val Lty_Para5_mData=out UInt(Config.LTY_PARAM5_MEM_WIDTH bits)//其实6和5一样，不知道还要不要再多开一个。。。
-        // val Lty_Para6_mData=out UInt(Config.LTY_PARAM6_MEM_WIDTH bits)
         val Lty_Para_mReady=in Bool()//其实接受方那边是一直准备好了的，但是，为了处理两行同时产生新的连通域的情况，需要有一个先后处理顺序
         //如果一二行的Valid同时拉高
         //不过此时MEM一次只能处理一个点的数据
             //第二行的mReady应该 是！lineValid&&line2Valid
             //第一行的mReady就一直拉高就行了
         val Lty_Para_mValid=out Bool()
+         //写回计算结果相关，6个参数
+        //我们只需要算出来需要累加的结果，然后再发过去，累加操作让接受模块做，所以在此不考虑读冲突，只考虑写冲突
+        // val Lty_Para1_mData=out UInt(Config.LTY_PARAM1_MEM_WIDTH bits)
+        // val Lty_Para2_mData=out UInt(Config.LTY_PARAM2_MEM_WIDTH bits)
+        // val Lty_Para3_mData=out UInt(Config.LTY_PARAM3_MEM_WIDTH bits)
+        // val Lty_Para4_mData=out UInt(Config.LTY_PARAM4_MEM_WIDTH bits)
+        // val Lty_Para5_mData=out UInt(Config.LTY_PARAM5_MEM_WIDTH bits)//其实6和5一样，不知道还要不要再多开一个。。。
+        // val Lty_Para6_mData=out UInt(Config.LTY_PARAM6_MEM_WIDTH bits)---注掉的原因：Dsp可以计算A*B+C,还是单独拿一个模块来处理累加计算好了
     }
+    
     io.Mark_Out:=0
     noIoPrefix()
 //状态机相关=============================================================================================
-    val Fsm=new Mark_Fsm(io.start)
+    val Fsm=new Mark_Fsm(io.start&&(!RegNext(io.start)))
     val Init_Cnt=WaCounter(Fsm.currentState === MARK_ENUM.INIT, 3, 5)//初始化计数器,数五拍
     Fsm.Init_End:=Init_Cnt.valid
     //进数据控制相关---这里的计数器没有减一，要注意⭐
-    val Pixel_In_Cnt=WaCounter(io.sData.fire,log2Up(Config.LTY_DATA_BRAM_B_DEPTH),Config.LTY_DATA_BRAM_B_WIDTH)//当前处理的点的坐标计数器
+    val Pixel_In_Cnt=WaCounter(io.sData.fire,log2Up(Config.LTY_DATA_BRAM_B_DEPTH),Config.LTY_DATA_BRAM_B_DEPTH)//当前处理的点的坐标计数器
+    io.Mark_Out_Addr:=Pixel_In_Cnt.count-1//本来是第0个点，但是拿到一个有效点后，count变成了1、但是需要关心的是0的地址，所以要减去一
         /*这里的计数器原理：首先状态位于拿数据状态，Pixel_Pos从0开始数
         当sData.fire拉高，进来一个滤波后图片数据和当前点的上标记，状态跳转到之后的状态，然后Pixel_Pos拉高
         假如只收一个数据，sData.fire拉高后下一个周期Pixel_Pos Valid也拉高，下一次拿数据状态，Pixel_Pos=1，那么这时应该退出去了
         
         反正这里不能用减一的原因是这里是先拿点再判断，而前面减一是先判断再拿点⭐
         */
-    Fsm.Row_End:=Pixel_In_Cnt.valid
+    Fsm.Row_End:=Pixel_In_Cnt.valid&&io.sData.fire//必须加一个fire,存在一种情况：当最后一个点进来后，但是
     Fsm.Get_Data_End:=io.sData.fire&&io.sData.payload>=io.Temp_Back_Thrd//拿到一个数据结束信号拉高并同时启动三个子条件的判断，如果三个子条件都不满足，那么继续拿数据
 //连通域条件判断相关=======================================================================================
     val Left_Mark=Vec(Reg(UInt(Config.LTY_MARK_BRAM_WIDTH bits))init(0),4)//创建四个移位寄存器，代表左边的四个标记点
@@ -429,7 +466,8 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         如果上下两行同时创建了两个新连通域，怎么更新标记矩阵以及怎么更新Lty_Data?
             也就是上下两行要同时更新连通域，怎么处理
                 解决方案：读Lty_Data_Mem时给一个Valid信号，和switch选择开关
-    
+            第二天补充：由于上下两行同时创建新连通域，但是他俩创建的连通域标记都是一样的，这是不可能发生的，还需要对这周情况进行处理
+
     */
     // when(Fsm.currentState===MARK_ENUM.COND_CHOSE){//首先应该进入拿数据状态
     //     //然后拿像素点和阈值比较
@@ -440,11 +478,12 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
     Fsm.Up1_Cond:=False//进入上不为0状态，处理左边四个点
 
     // Fsm.Gen_New_Lty_End:=False//进入生成新连通域状态
-    Fsm.Up0_Left1_End:=False//进入上为0左不为0状态
-    Fsm.Up1_Cond_End:=False//进入上不为0状态，处理左边四个点
-
+    // Fsm.Up0_Left1_End:=False//进入上为0左不为0状态
+    // Fsm.Up1_Cond_End:=False//进入上不为0状态，处理左边四个点
+    io.New_Lty_Gen:=False
     when(io.Up_mark === 0 && Left_Mark(0)===0) {//上面和左边都没被标记
         io.Mark_Out:=io.Lty_Total_NUm+1//那么这是一个新的连通域、
+        io.New_Lty_Gen:=True
         Shift_Mark_In:=io.Lty_Total_NUm+1
         Fsm.Gen_New_Lty:=True//进入生成新连通域状态
         Shift_Start:=True//更新移位寄存器的值供下一个点
@@ -458,13 +497,13 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         // Fsm.Up1_Cond:=False//进入上不为0状态，处理左边四个点
     }.elsewhen(io.Up_mark =/= 0 && Left_Mark(0) === 0) {//上面点被标记，左边点没被标记，将当前点标记为上面的点
         io.Mark_Out:=io.Up_mark
-        Shift_Mark_In:=io.Up_mark
-        // Fsm.Gen_New_Lty:=False//进入生成新连通域状态
-        // Fsm.Up0_Left1:=False//进入上为0左不为0状态
+        Shift_Mark_In:=io.Up_mark//Shift_Mark_In是一个wire类型
         Fsm.Up1_Cond:=True//进入上不为0状态，处理左边四个点                
     }        
     
 //生成新连通域(上，左都为0)==============================================================================
+    io.Mark_Out_Valid:=True//从False改为一直True的原因：如果不满足三个条件，它也应该有效，只不过它的值是0
+    io.Lty_Para_mValid:=True
     Fsm.Gen_New_Lty_End:=io.Lty_Para_mReady&&io.Lty_Para_mValid//修改原因：需要数据发过去才能退出这个状态Delay(Fsm.currentState===MARK_ENUM.GEN_NEW_LTY,Config.DSP_PIPELINE_STAGE)//控制状态结束
     when(Fsm.currentState===MARK_ENUM.GEN_NEW_LTY){//这部分代码主要处理状态结束
         //首先得进入生成新连通域状态
@@ -473,29 +512,66 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         io.Mark_Out_Valid:=True
         //更新移位寄存器的值供下一轮使用
     }
-    io.Lty_Para_mValid:=Delay(Fsm.currentState===MARK_ENUM.GEN_NEW_LTY,Config.DSP_PIPELINE_STAGE)&&Fsm.currentState===MARK_ENUM.GEN_NEW_LTY
+
+    //io.Lty_Para_mValid:=Delay(Fsm.currentState===MARK_ENUM.GEN_NEW_LTY,Config.DSP_PIPELINE_STAGE)&&Fsm.currentState===MARK_ENUM.GEN_NEW_LTY
 //上为0，左不为0
     Fsm.Up0_Left1_End:=io.Lty_Para_mReady&&io.Lty_Para_mValid
     when(Fsm.currentState===MARK_ENUM.UP0_LEFT1){
         io.Mark_Out_Valid:=True
     }
-    io.Lty_Para_mValid:=Delay(Fsm.currentState===MARK_ENUM.UP0_LEFT1,Config.DSP_PIPELINE_STAGE)&&Fsm.currentState===MARK_ENUM.UP0_LEFT1
-//上不为0，同时处理左四个点
+    //io.Lty_Para_mValid:=Delay(Fsm.currentState===MARK_ENUM.UP0_LEFT1,Config.DSP_PIPELINE_STAGE)&&Fsm.currentState===MARK_ENUM.UP0_LEFT1
+//上不为0，还要处理左四个点
+    Fsm.Up1_Cond_End:=io.Lty_Para_mReady&&io.Lty_Para_mValid
+        //同样地，只有当数据算出来的数据发过去后才能退出这个状态去干其他的事情
     when(Fsm.currentState===MARK_ENUM.UP1_COND){
-        
+        //位于上不为0状态，先处理当前点
+        io.Mark_Out_Valid:=True//需要向当前点对应的mem地址写入mark标记0
     }
+    //io.Lty_Para_mValid:=Delay(Fsm.currentState===MARK_ENUM.UP1_COND,Config.DSP_PIPELINE_STAGE)&&Fsm.currentState===MARK_ENUM.UP1_COND
+//===========================左边四个点处理=====================================
+    Fsm.UpData_Left1_End:=io.Lty_Para_mReady&&io.Lty_Para_mValid//数据发完就结束
+    when(Fsm.currentState===MARK_ENUM.UPDATA_LEFT1){//更新左边四个点
+        when(Left_Mark(0)=/=0&&Left_Mark(0)=/=io.Up_mark){
+            Left_Mark(0):=io.Up_mark
+            io.Mark_Out:=io.Up_mark
+            io.Mark_Out_Valid:=True//将当前点标记更新为上标记
+            io.Mark_Out_Addr:=Pixel_In_Cnt.count-2
+        }
+    }
+    Fsm.UpData_Left2_End:=io.Lty_Para_mReady&&io.Lty_Para_mValid//数据发完就结束
+    when(Fsm.currentState===MARK_ENUM.UPDATA_LEFT2){//更新左边四个点
+        when(Left_Mark(1)=/=0&&Left_Mark(1)=/=io.Up_mark){
+            Left_Mark(1):=io.Up_mark
+            io.Mark_Out:=io.Up_mark
+            io.Mark_Out_Valid:=True//将当前点标记更新为上标记
+            io.Mark_Out_Addr:=Pixel_In_Cnt.count-3
+        }
 
-
-
-
+    }
+    Fsm.UpData_Left3_End:=io.Lty_Para_mReady&&io.Lty_Para_mValid//数据发完就结束
+    when(Fsm.currentState===MARK_ENUM.UPDATA_LEFT3){//更新左边四个点
+        when(Left_Mark(2)=/=0&&Left_Mark(2)=/=io.Up_mark){
+            Left_Mark(2):=io.Up_mark
+            io.Mark_Out:=io.Up_mark
+            io.Mark_Out_Valid:=True//将当前点标记更新为上标记
+            io.Mark_Out_Addr:=Pixel_In_Cnt.count-4
+        }
+    }
+    Fsm.UpData_Left4_End:=io.Lty_Para_mReady&&io.Lty_Para_mValid//数据发完就结束
+    when(Fsm.currentState===MARK_ENUM.UPDATA_LEFT4){//更新左边四个点
+        when(Left_Mark(3)=/=0&&Left_Mark(3)=/=io.Up_mark){
+            Left_Mark(3):=io.Up_mark
+            io.Mark_Out:=io.Up_mark
+            io.Mark_Out_Valid:=True//将当前点标记更新为上标记
+            io.Mark_Out_Addr:=Pixel_In_Cnt.count-5
+        }
+    }
 //输出的要更新的标记点握手信号处理============================================================
     when(Fsm.currentState===MARK_ENUM.GEN_NEW_LTY||Fsm.currentState===MARK_ENUM.UP0_LEFT1||Fsm.currentState===MARK_ENUM.UP1_COND){
         io.Mark_Out_Valid:=True
-    }otherwise{
-        io.Mark_Out_Valid:=False
     }
-    io.Mark_Out_Addr:=Pixel_In_Cnt.count-1//本来是第0个点，但是拿到一个有效点后，count变成了1、但是需要关系的是0的地址，所以要减去一
-
+    
+    // io.J_Out:=Pixel_In_Cnt.count-1//列标
 //sData握手信号控制
     io.sData.ready:=Fsm.currentState===MARK_ENUM.GET_DATA//只要在拿数据状态下，sReady一之拉高，直到拿到一个数据
 }
@@ -507,9 +583,89 @@ class Lty_Para_Accu extends Component{
 
 
 
+class fuck_latch extends Component{
+    val start=in Bool()
+    val Fsm=new Mark_Fsm(start)
+Fsm.Init_End:=False
+Fsm.Get_Data_End:=False
+Fsm.Row_End:=False
+Fsm.Gen_New_Lty:=False
+Fsm.Gen_New_Lty_End:=False
+Fsm.Up1_Cond:=False
+Fsm.Up1_Cond_End:=False
+Fsm.Up0_Left1:=False
+Fsm.Up0_Left1_End:=False
+Fsm.UpData_Left1_End:=False
+Fsm.UpData_Left2_End:=False
+Fsm.UpData_Left3_End:=False
+Fsm.UpData_Left4_End:=False
+}
+class Feature_Mark extends Component{//整合图片缓存模块和标记模块
+    val Lty_Cache_Module=new Lty_Feature_Cache
+    val Lty_Mark_Up=new Lty_Mark_Sub_Module
+    val Lty_Mark_Down=new Lty_Mark_Sub_Module
+    val Config=MemConfig()
+    val io=new Bundle{
+        val sData=slave Stream(UInt(Config.LTY_DATA_BRAM_A_WIDTH bits))//进来的数据
+        val start=in Bool()//lty计算启动信号
+
+        val Temp_Back_Mean=in UInt(16 bits)//左移32Bit需要32 bit位宽---不过目前按左移12、13bit来处理的(仿真用左移10位)
+        val Sign_Flag=in Bool()//有无符号位
+        val Temp_Back_Thrd=in UInt(16 bits)//由于进来的图片像素点都是整形，而Temp_Back_Thrd的实际值带小数，所以可以将Temp_Back_Thrd向上取整
+    }
+    noIoPrefix()
+    Lty_Cache_Module.io.sData<>io.sData
+    Lty_Cache_Module.io.start<>io.start
+    val Total_Num_Reg=Reg(UInt(log2Up(Config.LTY_PARAM_MEM_DEPTH) bits))init(0)//创建连通域计数器
+    when(io.start){
+        Total_Num_Reg:=0
+    }otherwise{
+        Total_Num_Reg:=Total_Num_Reg
+    }
+    //Line up=======================================================
+    Lty_Mark_Up.io.start:=Lty_Cache_Module.io.strat_Sub_Module
+    Lty_Mark_Up.io.sData<>Lty_Cache_Module.io.mData1
+    Lty_Mark_Up.io.Lty_Total_NUm:=Total_Num_Reg
+
+    Lty_Mark_Up.io.Up_mark<>Lty_Cache_Module.io.Mark1Up_Out
+    Lty_Mark_Up.io.Mark_Out_Addr<>Lty_Cache_Module.io.Mark1_In_Addr
+    Lty_Mark_Up.io.Mark_Out_Valid<>Lty_Cache_Module.io.Mark1_In_Valid
+    Lty_Mark_Up.io.Mark_Out<>Lty_Cache_Module.io.Mark1_In
+
+    Lty_Mark_Up.io.Sign_Flag<>io.Sign_Flag
+    Lty_Mark_Up.io.Temp_Back_Mean<>io.Temp_Back_Mean
+    Lty_Mark_Up.io.Temp_Back_Thrd<>io.Temp_Back_Thrd
+
+    Lty_Mark_Up.io.Lty_Para_mReady:=True//待修改
+    //Line Down=====================================================
+    Lty_Mark_Down.io.start:=Lty_Cache_Module.io.strat_Sub_Module
+    Lty_Mark_Down.io.sData<>Lty_Cache_Module.io.mData2
+    Lty_Mark_Down.io.Lty_Total_NUm:=Total_Num_Reg
+
+    Lty_Mark_Down.io.Up_mark<>Lty_Cache_Module.io.Mark2Up_Out
+    Lty_Mark_Down.io.Mark_Out_Addr<>Lty_Cache_Module.io.Mark2_In_Addr
+    Lty_Mark_Down.io.Mark_Out_Valid<>Lty_Cache_Module.io.Mark2_In_Valid
+    Lty_Mark_Down.io.Mark_Out<>Lty_Cache_Module.io.Mark2_In
+
+    Lty_Mark_Down.io.Sign_Flag<>io.Sign_Flag
+    Lty_Mark_Down.io.Temp_Back_Mean<>io.Temp_Back_Mean
+    Lty_Mark_Down.io.Temp_Back_Thrd<>io.Temp_Back_Thrd    
+    Lty_Mark_Down.io.Lty_Para_mReady:=True//待修改
+
+
+
+    when(Lty_Mark_Up.io.New_Lty_Gen&&Lty_Mark_Down.io.New_Lty_Gen){
+        Total_Num_Reg:=Total_Num_Reg+2//同时满足，加2个连通域
+    }elsewhen(Lty_Mark_Up.io.New_Lty_Gen||Lty_Mark_Down.io.New_Lty_Gen){//只有一个连通域生成
+        Total_Num_Reg:=Total_Num_Reg+1
+    }
+
+    
+        
+}
 
 object LtyGen extends App { 
     val verilog_path="./testcode_gen/Lty_Gen" 
 //    SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Lty_Mark_Gen)
-   SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Lty_Mark_Sub_Module)
+   SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Feature_Mark)
 }

@@ -6,7 +6,6 @@ import sun.awt.OSInfo.OSType
 import wa.{StreamDataWidthConvert, WaCounter, xMul}
 import xingmin.memory.math.Mul
 
-
 case class ConnDomainConfig(DATA_WIDTH: Int, FEATURE_WIDTH: Int, FEATURE_LENGTH: Int, ROW_MEM_DEPTH: Int) { //32 11(2040) 2040 用来缓存数据（2040）
   val STREAM_DATA_WIDTH = DATA_WIDTH * 4
 }
@@ -14,6 +13,68 @@ case class ConnDomainConfig(DATA_WIDTH: Int, FEATURE_WIDTH: Int, FEATURE_LENGTH:
 object ComputeEnum extends SpinalEnum(defaultEncoding = binaryOneHot) {
   val IDLE, Judge, UPLEFT0, UP0LEFT, UP1LEFT,UP1LEFT1,END= newElement
 }
+
+object JudgeLEFTEnum extends SpinalEnum(defaultEncoding = binaryOneHot) {
+  val IDLEE, ONE, TWO, THREE, FOUR= newElement
+}
+
+case class JudgeLEFTFsm(start: Bool) extends Area {
+
+  val left2 = Bool()
+  val left3 = Bool()
+  val left4 = Bool()
+
+  val currentState = Reg(JudgeLEFTEnum()) init JudgeLEFTEnum.IDLEE
+  val nextState = JudgeLEFTEnum()
+  currentState := nextState
+
+  switch(currentState) {
+    is(JudgeLEFTEnum.IDLEE) {
+      when(start) {
+        nextState := JudgeLEFTEnum.ONE
+      } otherwise {
+        nextState := JudgeLEFTEnum.IDLEE
+      }
+    }
+
+    is(JudgeLEFTEnum.ONE) {
+      when(left2) {
+        nextState := JudgeLEFTEnum.TWO
+      } otherwise {
+        nextState := JudgeLEFTEnum.IDLEE
+      }
+    }
+
+    is(JudgeLEFTEnum.TWO) {
+      when(left3) {
+        nextState := JudgeLEFTEnum.THREE
+      } otherwise {
+        nextState := JudgeLEFTEnum.IDLEE
+      }
+    }
+
+    is(JudgeLEFTEnum.THREE) {
+      when(left4) {
+        nextState := JudgeLEFTEnum.FOUR
+      } otherwise {
+        nextState := JudgeLEFTEnum.IDLEE
+      }
+    }
+
+
+    is(JudgeLEFTEnum.FOUR) {
+      nextState := JudgeLEFTEnum.IDLEE
+    }
+
+  }
+
+
+}
+
+
+
+
+
 
 case class ComputeFsm(start: Bool) extends Area {
   val endEnd = Bool() //是否为最后一个数据
@@ -67,7 +128,7 @@ case class ComputeFsm(start: Bool) extends Area {
 
 
 
-      }
+    }
 
 
 
@@ -144,19 +205,15 @@ class connDomain(connDomainConfig: ConnDomainConfig) extends Component {
     val tempBackMean = in UInt (connDomainConfig.DATA_WIDTH bits)
     val mData = master Stream UInt(64 bits)
     val connCount = out UInt (connDomainConfig.DATA_WIDTH bits)
-    //val extractSign = out Bool()
     val last = out Bool()
-    val ready= in Bool()
+    val signBit= in Bool()
 
-
-    //val mData = master Stream  UInt(connDomainConfig.DATA_WIDTH bits)
   }
   noIoPrefix()
   //要进行的数据
   val inputFeature = Flow(UInt(connDomainConfig.DATA_WIDTH bits))
 
-  //控制ready
-  val readyConunt = WaCounter(io.sData.valid, connDomainConfig.FEATURE_WIDTH, connDomainConfig.FEATURE_LENGTH - 1)
+
 
 
   //fifo 用于存数据
@@ -185,7 +242,7 @@ class connDomain(connDomainConfig: ConnDomainConfig) extends Component {
   val rowCnt = WaCounter(columnCnt.valid, connDomainConfig.FEATURE_WIDTH, connDomainConfig.FEATURE_LENGTH - 1)
   val totalCnt = WaCounter(inputFeature.valid, connDomainConfig.FEATURE_WIDTH * 2, connDomainConfig.FEATURE_LENGTH * connDomainConfig.FEATURE_LENGTH - 1)
   val count = Reg(UInt(connDomainConfig.DATA_WIDTH bits)) init 0
-  val outCount =  WaCounter(fsm.currentState===ComputeEnum.END&&io.ready, connDomainConfig.DATA_WIDTH, count-1)
+  val outCount =  WaCounter(fsm.currentState===ComputeEnum.END&&io.mData.ready, connDomainConfig.DATA_WIDTH, count-1)
 
 
 
@@ -195,24 +252,39 @@ class connDomain(connDomainConfig: ConnDomainConfig) extends Component {
 
 
 
+
+
   val rdAddr = Reg(UInt(connDomainConfig.FEATURE_WIDTH bits)) init 0
   val wrAddr = RegNext(rdAddr)
   val tempData = UInt(36 bits)
-  tempData:= (U(0,8 bits)@@(inputFeature.payload<<12)) + io.tempBackMean
+  when(io.signBit===True){
+    tempData:= (U(0,8 bits)@@(inputFeature.payload<<12)) + io.tempBackMean
+  }otherwise {
+    tempData:= (U(0,8 bits)@@(inputFeature.payload<<12)) - io.tempBackMean
+  }
+
 
 
   val uplist: List[UInt] = List.fill(2040)(0)
   val upmem = Mem(UInt(connDomainConfig.DATA_WIDTH bits), initialContent = uplist)
+  val upDate = upmem.readSync(rdAddr) //用于mark 的判断
+  val upData1= upmem.readSync(rdAddr-3)
+  val upData2= upmem.readSync(rdAddr-4)
+  val upData3= upmem.readSync(rdAddr-5)
+
 
   //存左边的数
   val left = Reg(UInt(connDomainConfig.DATA_WIDTH bits)) init 0
-  val left1 = Reg(UInt(connDomainConfig.DATA_WIDTH bits)) init 0
-  val left2 = Reg(UInt(connDomainConfig.DATA_WIDTH bits)) init 0
-  val left3 = Reg(UInt(connDomainConfig.DATA_WIDTH bits)) init 0
-  val upDate = upmem.readSync(rdAddr) //用于mark 的判断
+  val left1 = UInt(connDomainConfig.DATA_WIDTH bits)
+  val left2 = UInt(connDomainConfig.DATA_WIDTH bits)
+  val left3 = UInt(connDomainConfig.DATA_WIDTH bits)
+  left1 :=0
+  left2 :=0
+  left3 :=0
 
+  val value = UInt(connDomainConfig.DATA_WIDTH bits)
+  value := 0
 
-  //val endAddr = (upDate>left)? upDate|left
   val endAddr = UInt(connDomainConfig.DATA_WIDTH bits)
   when(upDate =/= 0 && left =/= 0) {
     endAddr := upDate
@@ -223,10 +295,13 @@ class connDomain(connDomainConfig: ConnDomainConfig) extends Component {
   }
 
   //最后的mem
-  val endmem = Mem(UInt(272 bits), wordCount = 800) //12 44 44 32 16 16   164
 
+  val endmem = Mem(UInt(272 bits), wordCount = 800) // 16  64 64 56 36 36   176
   val endDate = endmem.readSync(Delay(endAddr(9 downto 0),9))
   val endDate1 = endmem.readSync(Delay(endAddr(9 downto 0),4))
+  val address = UInt(connDomainConfig.FEATURE_WIDTH bits)
+  address :=0
+
 
   fsm.judge := (inputFeature.payload <= io.threshold) ? True | False
   fsm.upleft0 := (upDate === 0 && left === 0 && inputFeature.payload > io.threshold) ? True | False
@@ -238,6 +313,13 @@ class connDomain(connDomainConfig: ConnDomainConfig) extends Component {
   fsm.delayLeft:= Delay(fsm.up0left,5)
   fsm.delayUpLeft:= Delay(fsm.up1lef1,10)
 
+  val xinFsm = JudgeLEFTFsm(fsm.up1lef1)
+  xinFsm.left2 := (left1 =/= 0 && left1 =/= upDate)
+  xinFsm.left3 := (left2 =/= 0 && left2 =/= upDate)
+  xinFsm.left4:= (left3 =/= 0 && left3 =/= upDate)
+
+
+
   val Attributes = UInt(272 bits)  // 16  64 64 56 36 36   176  (15 downto 0)  (79 downto 16) (143 downto 80)   Attributes(199 downto 144) (235 downto 200) (271 downto 236)
   Attributes:=0
   val two = UInt(64 bits)
@@ -246,54 +328,60 @@ class connDomain(connDomainConfig: ConnDomainConfig) extends Component {
   val five = Reg(UInt(36 bits)) init 0
   val six =  U(0,2 bits)
   val judgeLeft = Reg(UInt(3 bits)) init 0
-
   //乘法运算
 
-      val mul = Mul(36, 36, 56, "Unsigned", "Unsigned", 1, "DSP", this.clockDomain, "Mul")
-      mul.io.A <> tempData
-      mul.io.B <> tempData
-      mul.io.P <> four
+  val mul = Mul(36, 36, 56, "Unsigned", "Unsigned", 1, "DSP", this.clockDomain, "Mul")
+  mul.io.A <> tempData
+  mul.io.B <> tempData
+  mul.io.P <> four
 
-      val mul1 = Mul(56, 11, 64, "Unsigned", "Unsigned", 2, "DSP", this.clockDomain, "nextMul")
-      mul1.io.A <> mul.io.P
-      mul1.io.B <> rowCnt.count+5
-      mul1.io.P <> two
+  val mul1 = Mul(56, 11, 64, "Unsigned", "Unsigned", 2, "DSP", this.clockDomain, "nextMul")
+  mul1.io.A <> mul.io.P
+  mul1.io.B <> rowCnt.count+5
+  mul1.io.P <> two
 
-      val mul2 = Mul(56, 11, 64, "Unsigned", "Unsigned", 2, "DSP", this.clockDomain, "twoMul")
-      mul2.io.A <> mul.io.P
-      mul2.io.B <> columnCnt.count+4
-      mul2.io.P <> three
+  val mul2 = Mul(56, 11, 64, "Unsigned", "Unsigned", 2, "DSP", this.clockDomain, "twoMul")
+  mul2.io.A <> mul.io.P
+  mul2.io.B <> columnCnt.count+4
+  mul2.io.P <> three
 
 
   when(fsm.currentState === ComputeEnum.UPLEFT0||fsm.currentState === ComputeEnum.UP1LEFT||fsm.currentState === ComputeEnum.UP0LEFT||fsm.currentState ===ComputeEnum.UP1LEFT1){
     dataCvt.io.mData.ready.clear()
-    left1 := upmem.readSync(rdAddr-2)
-    left2 := upmem.readSync(rdAddr-3)
-    left3 := upmem.readSync(rdAddr-4)
+
+
+
+
   }
 
 
 
   when(fsm.currentState === ComputeEnum.UPLEFT0 && fsm.nextState === ComputeEnum.Judge) {
     Attributes(15 downto 0):=U"0000000000000001"
-    endmem.write(count(9 downto 0), Attributes)
+    endAddr:= count
+
+    // endmem.write(count(9 downto 0), Attributes)
     Attributes(79 downto 16):= two
     Attributes(143 downto 80):=three
     Attributes(199 downto 144):=RegNext(RegNext(four))
     Attributes(235 downto 200) := five
     Attributes(271 downto 236) := five
     left := count
+
+
   }
 
-  when((fsm.currentState === ComputeEnum.UP1LEFT||fsm.currentState ===ComputeEnum.UP0LEFT) && fsm.nextState === ComputeEnum.Judge){
+  when ((fsm.currentState === ComputeEnum.UP1LEFT||fsm.currentState ===ComputeEnum.UP0LEFT) && fsm.nextState === ComputeEnum.Judge){
     Attributes(15 downto 0):=U"0000000000000001"+endDate1(15 downto 0)
     Attributes(79 downto 16):=Delay(two,2)+endDate1(79 downto 16)
     Attributes(143 downto 80):=Delay(three,2)+endDate1(143 downto 80)
     Attributes(199 downto 144):=Delay(four,4)+endDate1(199 downto 144)
     Attributes(235 downto 200) := five+endDate1(235 downto 200)
     Attributes(271 downto 236) := (five > endDate1(271 downto 236)) ? five | endDate1(271 downto 236)
-    endmem.write(Delay(endAddr(9 downto 0),5), Attributes)
     left := Delay(endAddr,5)
+    endAddr:=Delay(endAddr,5)
+
+
 
   }
 
@@ -307,7 +395,7 @@ class connDomain(connDomainConfig: ConnDomainConfig) extends Component {
       Attributes(199 downto 144) := Delay(four, 9)+Delay(four, 9) + endDate(199 downto 144)
       Attributes(235 downto 200) := five+five + endDate(235 downto 200)
       Attributes(271 downto 236) := (five > endDate(271 downto 236)) ? five | endDate(271 downto 236)
-      endmem.write(Delay(endAddr(9 downto 0),10), Attributes)
+      endAddr:=Delay(endAddr,10)
 
     }
 
@@ -318,7 +406,8 @@ class connDomain(connDomainConfig: ConnDomainConfig) extends Component {
       Attributes(199 downto 144) := Delay(four(52 downto 0), 9) * 3 + endDate(199 downto 144)
       Attributes(235 downto 200) := five +five+five + endDate(235 downto 200)
       Attributes(271 downto 236) := (five > endDate(271 downto 236)) ? five | endDate(271 downto 236)
-      endmem.write(Delay(endAddr(9 downto 0),10), Attributes)
+      endAddr:=Delay(endAddr,10)
+
     }
 
     when(judgeLeft === 3) {
@@ -328,7 +417,8 @@ class connDomain(connDomainConfig: ConnDomainConfig) extends Component {
       Attributes(199 downto 144) := Delay(four(52 downto 0), 9) * 4 + endDate(199 downto 144)
       Attributes(235 downto 200) := five + five + five+ five + endDate(235 downto 200)
       Attributes(271 downto 236) := (five > endDate(271 downto 236)) ? five | endDate(271 downto 236)
-      endmem.write(endAddr(9 downto 0), Attributes)
+      endAddr:=Delay(endAddr,10)
+
     }
 
     when(judgeLeft === 4) {
@@ -338,7 +428,8 @@ class connDomain(connDomainConfig: ConnDomainConfig) extends Component {
       Attributes(199 downto 144) := Delay(four(52 downto 0), 9) * 5 + endDate(199 downto 144)
       Attributes(235 downto 200) := five + five + five + five+ five+ endDate(235 downto 200)
       Attributes(271 downto 236) := (five > endDate(271 downto 236)) ? five | endDate(271 downto 236)
-      endmem.write(endAddr(9 downto 0), Attributes)
+      endAddr:=Delay(endAddr,10)
+
     }
 
 
@@ -346,90 +437,106 @@ class connDomain(connDomainConfig: ConnDomainConfig) extends Component {
 
 
 
-
-when(inputFeature.valid){
-
-  when(rdAddr === connDomainConfig.FEATURE_LENGTH - 1) {
-    rdAddr := 0
-  } elsewhen (fsm.up1left|fsm.up0left|fsm.upleft0|fsm.up1lef1) {
-    rdAddr := rdAddr
-  } otherwise {
-    rdAddr := rdAddr + 1
+  when(xinFsm.currentState===JudgeLEFTEnum.ONE){//2
+    address := wrAddr - 2
+    value := RegNext(upDate)
+    endAddr(9 downto 0):= left(9 downto 0)
+    Attributes:=U(0, 272 bits)
+    left1 := upData1
+  }elsewhen(xinFsm.currentState===JudgeLEFTEnum.TWO){//4
+    address := wrAddr - 3
+    value := Delay(value,2)
+    left2 := upData2
+    judgeLeft := 2
+  }elsewhen(xinFsm.currentState===JudgeLEFTEnum.THREE){//8
+    address := wrAddr -4
+    value := Delay(value,3)
+    left3 := upData3
+    judgeLeft := 3
+  } elsewhen (xinFsm.currentState === JudgeLEFTEnum.FOUR) {//10
+    address := wrAddr - 5
+    value := Delay(value, 4)
+    judgeLeft := 4
   }
 
 
 
 
 
-
-  when(fsm.upleft0) {
-    upmem.write(wrAddr, count + 1)
-    //left :=Delay(count+1,3)
-    count := count + 1
-    five:=tempData
+  when(xinFsm.currentState===JudgeLEFTEnum.ONE||((fsm.currentState === ComputeEnum.UP1LEFT1 || fsm.currentState === ComputeEnum.UPLEFT0 || fsm.currentState === ComputeEnum.UP1LEFT || fsm.currentState === ComputeEnum.UP0LEFT) && fsm.nextState === ComputeEnum.Judge)) {
+    endmem.write(endAddr(9 downto 0), Attributes)
   }
 
-  when(fsm.up1left) {
-    upmem.write(wrAddr, upDate)
-    //left := Delay(upDate,5)
-    five:=tempData
 
 
-  }
 
-  when(fsm.up1lef1) {
-    upmem.write(wrAddr - 1, upDate)
-   // left := Delay(upDate,10)
-    five := tempData
-    judgeLeft:=1
-    endmem.write(left(9 downto 0), U(0,272 bits))
+  when(inputFeature.valid){
 
-    when(left1 =/= 0 && left1 =/= upDate) {
-      upmem.write(wrAddr - 2, upDate)
-      judgeLeft := 2
-      endmem.write(left1(9 downto 0), U(0, 272 bits))
+    when(rdAddr === connDomainConfig.FEATURE_LENGTH - 1) {
+      rdAddr := 0
+    } elsewhen (fsm.up1left|fsm.up0left|fsm.upleft0|fsm.up1lef1) {
+      rdAddr := rdAddr
+    } otherwise {
+      rdAddr := rdAddr + 1
     }
 
-    when(left2 =/= 0 && left2 =/= upDate) {
-      upmem.write(wrAddr - 3, upDate)
-      judgeLeft := 3
-      endmem.write(left2(9 downto 0), U(0, 272 bits))
+
+    when(fsm.upleft0) {
+      address := wrAddr
+      value:=count + 1
+      count := count + 1
+      five := tempData
+
     }
 
-    when(left3 =/= 0 && left3 =/= upDate) {
-      upmem.write(wrAddr - 3, upDate)
-      judgeLeft := 4
-      endmem.write(left3(9 downto 0), U(0, 272 bits))
+    when(fsm.up1left) {
+      address := wrAddr
+      value := upDate
+      five := tempData
     }
 
+    when(fsm.up1lef1) {
+      five := tempData
+      value := upDate
+      judgeLeft := 1
+
+    }
+
+
+    when(fsm.up0left) {
+      address := wrAddr
+      value := left
+      five := tempData
+    }
+
+
+    when(fsm.judge) {
+      address := wrAddr
+      value := U(0, 16 bits)
+      left := U(0, 16 bits)
+    }
+
+
+
+  }otherwise {
+    when((fsm.currentState === ComputeEnum.UPLEFT0 || fsm.currentState === ComputeEnum.UP1LEFT|| fsm.currentState ===ComputeEnum.UP0LEFT||fsm.currentState ===ComputeEnum.UP1LEFT1) && fsm.nextState === ComputeEnum.Judge) {
+      rdAddr := rdAddr + 1
+    }
+    fsm.up0left := False
+    fsm.up1left := False
+    fsm.up1lef1 := False
+    fsm.upleft0 := False
+
   }
 
 
+  upmem.write(address, value)
 
 
-  when(fsm.up0left) {
-    upmem.write(wrAddr, left)
-    five:=tempData
-  }
 
 
-  when(fsm.judge) {
-    upmem.write(wrAddr, U(0, 16 bits))
-    left := U(0, 16 bits)
-  }
- }otherwise {
-  when((fsm.currentState === ComputeEnum.UPLEFT0 || fsm.currentState === ComputeEnum.UP1LEFT|| fsm.currentState ===ComputeEnum.UP0LEFT||fsm.currentState ===ComputeEnum.UP1LEFT1) && fsm.nextState === ComputeEnum.Judge) {
-    rdAddr := rdAddr + 1
-  }
-  fsm.up0left := False
-  fsm.up1left := False
-  fsm.up1lef1 := False
-  fsm.upleft0 := False
 
-}
-
-
-  when(fsm.currentState===ComputeEnum.END) {
+  when(fsm.currentState===ComputeEnum.END||fsm.currentState === ComputeEnum.IDLE) {
     dataCvt.io.mData.ready.clear()
 
   }
@@ -438,8 +545,7 @@ when(inputFeature.valid){
 
   val outValue=endmem.readSync(outCount.count(9 downto 0)+1)
   io.mData.payload <> U(0,64 bits)
-  io.mData.valid := fsm.currentState===ComputeEnum.END&&io.ready
-  //io.extractSign := totalCnt.valid.fall()
+  io.mData.valid := fsm.currentState===ComputeEnum.END&&io.mData.ready
 
   io.connCount := count
 
@@ -457,6 +563,10 @@ when(inputFeature.valid){
     when(endCount===5){
       endCount := 0
       endValid := True
+      count :=0
+
+
+
     }otherwise {
       endCount := endCount +1
     }
@@ -487,6 +597,7 @@ when(inputFeature.valid){
 
   }
 
+
 }
 
 
@@ -508,6 +619,8 @@ class LtyLh_Stream extends Component{
       val start=in Bool()
       val threshold = in UInt (16 bits) //阈值s
       val tempBackMean = in UInt (16 bits)
+      val connCount=out UInt(16 bits)
+      val signBit=in Bool()
     }
     noIoPrefix()
     io.m_axis_mm2s_tkeep.setAll()
@@ -521,12 +634,13 @@ class LtyLh_Stream extends Component{
     Lty_Lh.io.mData.payload<>io.m_axis_mm2s_tdata
     Lty_Lh.io.last<>io.m_axis_mm2s_tlast
     Lty_Lh.io.mData.valid<>io.m_axis_mm2s_tvalid
-    Lty_Lh.io.ready<>io.m_axis_mm2s_tready
+    Lty_Lh.io.mData.ready<>io.m_axis_mm2s_tready
 
     Lty_Lh.io.tempBackMean<>io.tempBackMean
     Lty_Lh.io.threshold<>io.threshold
-
-
+    Lty_Lh.io.connCount<>io.connCount
+    Lty_Lh.io.signBit<>io.signBit
+    
 }
 
 object connDomain extends App {

@@ -35,7 +35,6 @@ class RegTable extends Component{
 	val Start_Compute=Reg0.field(Bool(),WO,doc="O:Ps writes start signal to pl").asOutput()
 	val Start_Gen_Lty=Reg0.field(Bool(),WO,doc="O:Start Map triangle").asOutput()
 	val Start_Map=Reg0.field(Bool(),WO,doc="O:Start Generating Lty").asOutput()
-
 	val Switch_Stream=Reg0.field(Bits(2 bits),WO,doc="Stream port switch").asOutput()//这里需要改成通过AXIS_SWITCH的端口数自动生成位宽
 	//val Read_Ps_Num=Reg0.field(Bits(10 bit),WO,doc="pl 从ps ddr读数据的数量").asInput()--报错
 	val End_Compute=Reg1.field(Bool(),RO,doc="I:Pl writes back Med Sort end signal to ps").asInput()

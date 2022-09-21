@@ -1,6 +1,4 @@
 package Archive
-
-
 import spinal.core.{Area, Bool, False, IntToBuilder, Reg, True, UInt, when}
 
 object WaCounter {

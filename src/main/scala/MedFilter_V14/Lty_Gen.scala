@@ -1,6 +1,7 @@
 package MedFilter_V12
 import spinal.core._
 import spinal.lib.slave
+
 import Archive.WaCounter
 import spinal.lib.master
 import spinal.lib.Delay
@@ -134,7 +135,12 @@ class Lty_Feature_Cache extends Component{//连通域标记
     val Col_Cnt=WaCounter(io.sData.valid&&io.sData.ready, log2Up(Config.LTY_DATA_BRAM_A_DEPTH), Config.LTY_DATA_BRAM_A_DEPTH-1)//创建输入数据的列计数器
     //Bram_Out_Cnt决定一行的结束，由于Bram2一定慢Bram1，所以选Bram2的出数据作为一行结束的标志
     //一开始只有一个计数器，但是由于有两个数据Bram，所以必须实现两个数据Bram计数器
-    val Bram_Out_Cnt=WaCounter(io.mData2.ready&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY, log2Up(Config.LTY_DATA_BRAM_B_DEPTH), Config.LTY_DATA_BRAM_B_DEPTH-1)//创建输出数据的列计数器
+    val FeatureMem_02_Addr=WaCounter(io.mData1.ready&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY,log2Up(Config.LTY_DATA_BRAM_B_DEPTH), Config.LTY_DATA_BRAM_B_DEPTH-1)
+    val FeatureMem_13_Addr=WaCounter(io.mData2.ready&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY,log2Up(Config.LTY_DATA_BRAM_B_DEPTH), Config.LTY_DATA_BRAM_B_DEPTH-1)
+    val Bram_Out_Cnt=WaCounter(RegNext(io.mData2.ready)&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY, log2Up(Config.LTY_DATA_BRAM_B_DEPTH), Config.LTY_DATA_BRAM_B_DEPTH-1)//创建输出数据的列计数器
+    //valid会在慢ready一拍，RegNext的原因：由于计数的是输出数据计数器，下层收到数据会慢一拍，所以要加一个RegNext
+
+    //解决：22、9、21/19:19---由于下层是通过ready信号向上层请求数据的，所以下层的列计数器也应该是
     val Bram_Out_Row_Cnt=WaCounter(Bram_Out_Cnt.valid, log2Up(Config.LTY_ROW_NUM/2),Config.LTY_ROW_NUM/2-1)//创建输出行数计数器,记得除2，因为并行度是2
     val INIT_CNT=WaCounter(Fsm.currentState === LTY_ENUM.INIT, 3, 5)//初始化计数器,数五拍
     val Row_Cnt_All=WaCounter(Col_Cnt.valid,log2Up(Config.LTY_ROW_NUM),Config.LTY_ROW_NUM-1)//输入行计数器
@@ -178,15 +184,14 @@ class Lty_Feature_Cache extends Component{//连通域标记
         FeatureMem(i).io.dina:=io.sData.payload//4个Bram的写数据
         FeatureMem(i).io.wea:=True
     }//读数据=================================
-    val FeatureMem_02_Cnt=WaCounter(io.mData2.ready&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY, log2Up(Config.LTY_DATA_BRAM_B_DEPTH), Config.LTY_DATA_BRAM_B_DEPTH-1)
+    //之前这里用的是计数触发信号是io.mData2.ready，会在ready拉低后丢一个点---连通域记录一
     for(i<-0 to 3){
         if(i%2==0){//0,2,第一行
-            FeatureMem(i).io.addrb:=FeatureMem_02_Cnt.count//
+            FeatureMem(i).io.addrb:=FeatureMem_02_Addr.count//02代表的是0，2Bram
         }else{//1,3，第二行
-            FeatureMem(i).io.addrb:=Bram_Out_Cnt.count//
+            FeatureMem(i).io.addrb:=FeatureMem_13_Addr.count//
         }
         FeatureMem(i).io.enb:=True//以后有需要在处理
-
     }
     io.mData1.payload:=Bram_Read_Chose?FeatureMem(2).io.doutb|FeatureMem(0).io.doutb//输出数据选择器
     io.mData2.payload:=Bram_Read_Chose?FeatureMem(3).io.doutb|FeatureMem(1).io.doutb//输出数据选择器
@@ -204,8 +209,8 @@ class Lty_Feature_Cache extends Component{//连通域标记
     //     io.mData1.valid:=False
     //     io.mData2.valid:=False
     // }
-    io.mData1.valid:=RegNext(io.mData1.ready&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY)//添加后面的Fsm.currentState===LTY_ENUM.WAIT_NEXT_READY条件是因为没必要让mValid在连通域提取状态拉高拉低
-    io.mData2.valid:=RegNext(io.mData2.ready&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY)//这里情况比较特殊，mValid应该由mReady驱动，也就是说，mReady不来的话，mValid不会拉高
+    io.mData1.valid:=RegNext(Fsm.currentState===LTY_ENUM.EXTRACT_LTY&&io.mData1.ready)//添加后面的Fsm.currentState===LTY_ENUM.WAIT_NEXT_READY条件是因为没必要让mValid在连通域提取状态拉高拉低
+    io.mData2.valid:=RegNext(Fsm.currentState===LTY_ENUM.EXTRACT_LTY&&io.mData2.ready)//这里情况比较特殊，mValid应该由mReady驱动，也就是说，mReady不来的话，mValid不会拉高
 
     // io.mData1.valid:=RegNext(Data_Out_Flag)
     // io.mData2.valid:=RegNext(Data_Out_Flag)
@@ -229,10 +234,10 @@ class Lty_Feature_Cache extends Component{//连通域标记
     val Up_Mark_Mem2=Mem(UInt(Config.LTY_MARK_BRAM_WIDTH bits),wordCount=Config.LTY_MARK_BRAM_DEPTH)//第二行的上标记矩阵
     Up_Mark_Mem2.write(io.Mark1_In_Addr,io.Mark1_In,io.Mark1_In_Valid)//写地址,写数据,写使能都延迟了一拍    
 
-    io.Mark1Up_Out:=Up_Mark_Mem1.readAsync(FeatureMem_02_Cnt.count)
-    io.Mark2Up_Out:=Up_Mark_Mem2.readAsync(Bram_Out_Cnt.count)
+    io.Mark1Up_Out:=Up_Mark_Mem1.readSync(FeatureMem_02_Addr.count)//mark地址和Bram地址同步
+    io.Mark2Up_Out:=Up_Mark_Mem2.readSync(FeatureMem_13_Addr.count)
     when(Bram_Out_Row_Cnt.count<=0){
-        io.Mark1Up_Out:=0//第一行出去的是0
+        io.Mark1Up_Out:=0//第一行出去的是0//第一行最后会出来一个xx，很奇怪
     }
     when(Fsm.currentState===LTY_ENUM.EXTRACT_LTY){
         io.strat_Sub_Module:=True//在这个状态下就启动连通域提取
@@ -412,11 +417,11 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
     io.Mark_Out:=0
     noIoPrefix()
 //状态机相关=============================================================================================
-    val Fsm=new Mark_Fsm(io.start&&(!RegNext(io.start)))
+    val Fsm=new Mark_Fsm(io.start)//&&(!RegNext(io.start))
     val Init_Cnt=WaCounter(Fsm.currentState === MARK_ENUM.INIT, 3, 5)//初始化计数器,数五拍
     Fsm.Init_End:=Init_Cnt.valid
     //进数据控制相关---这里的计数器没有减一，要注意⭐
-    val Pixel_In_Cnt=WaCounter(io.sData.fire,log2Up(Config.LTY_DATA_BRAM_B_DEPTH),Config.LTY_DATA_BRAM_B_DEPTH)//当前处理的点的坐标计数器
+    val Pixel_In_Cnt=WaCounter(RegNext(io.sData.ready)&&io.sData.valid,log2Up(Config.LTY_DATA_BRAM_B_DEPTH),Config.LTY_DATA_BRAM_B_DEPTH-1)//当前处理的点的坐标计数器
     io.Mark_Out_Addr:=Pixel_In_Cnt.count-1//本来是第0个点，但是拿到一个有效点后，count变成了1、但是需要关心的是0的地址，所以要减去一
         /*这里的计数器原理：首先状态位于拿数据状态，Pixel_Pos从0开始数
         当sData.fire拉高，进来一个滤波后图片数据和当前点的上标记，状态跳转到之后的状态，然后Pixel_Pos拉高
@@ -623,7 +628,7 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
         Total_Num_Reg:=Total_Num_Reg
     }
     //Line up=======================================================
-    Lty_Mark_Up.io.start:=Lty_Cache_Module.io.strat_Sub_Module
+    Lty_Mark_Up.io.start:=True//Lty_Cache_Module.io.strat_Sub_Module
     Lty_Mark_Up.io.sData<>Lty_Cache_Module.io.mData1
     Lty_Mark_Up.io.Lty_Total_NUm:=Total_Num_Reg
 
@@ -638,7 +643,7 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
 
     Lty_Mark_Up.io.Lty_Para_mReady:=True//待修改
     //Line Down=====================================================
-    Lty_Mark_Down.io.start:=Lty_Cache_Module.io.strat_Sub_Module
+    Lty_Mark_Down.io.start:=True//Lty_Cache_Module.io.strat_Sub_Module
     Lty_Mark_Down.io.sData<>Lty_Cache_Module.io.mData2
     Lty_Mark_Down.io.Lty_Total_NUm:=Total_Num_Reg
 
@@ -692,15 +697,15 @@ class Only_Mark extends Component{//整合图片缓存模块和标记模块
 
     Lty_Mark_Up.io.Lty_Para_mReady:=True//待修改
 
-
-
-
     when(Lty_Mark_Up.io.New_Lty_Gen){
         Total_Num_Reg:=Total_Num_Reg+1//1
     }
+
+
     
         
 }
+
 object LtyGen extends App { 
     val verilog_path="./testcode_gen/Lty_Gen" 
 //    SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Lty_Mark_Gen)

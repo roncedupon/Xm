@@ -1,5 +1,5 @@
 package MedFilter_V12
-case class MemConfig() {
+case class MemConfig(){
     val BRAM_IN_DATA_WIDTH=32
     val BRAM_OUT_DATA_WIDTH=32//还没学会怎么进128出16,但是想到了一种进64出64的办法
     val BRAM_DEPTH=(2048)/(BRAM_IN_DATA_WIDTH/16)//BRAM 数据深度

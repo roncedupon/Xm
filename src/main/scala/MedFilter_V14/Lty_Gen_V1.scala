@@ -110,6 +110,7 @@ class Lty_Feature_Cache extends Component{//连通域标记
     val io=new Bundle{
         val sData=slave Stream(UInt(Config.LTY_DATA_BRAM_A_WIDTH bits))//进来的数据
         val mData1=master Stream(UInt(Config.LTY_DATA_BRAM_B_WIDTH bits))//第一行出去的数据
+        val mData1_End_Receive=in Bool()
         val mData2=master Stream(UInt(Config.LTY_DATA_BRAM_B_WIDTH bits))//第二行出去的数据
 
         val Mark1Up_Out=out UInt(Config.LTY_MARK_BRAM_WIDTH bits)//出去的第一行的点上面对应的标记点
@@ -125,7 +126,8 @@ class Lty_Feature_Cache extends Component{//连通域标记
         val Mark2_In_Valid=in Bool()
         val start=in Bool()//lty计算启动信号
 
-        val strat_Sub_Module=out Bool()//启动下层的连通域标记子模块
+        val strat_Sub_Module1=out Bool()//启动下层的连通域标记子模块
+        val strat_Sub_Module2=out Bool()//启动下层的连通域标记子模块
     }
     noIoPrefix()
     val Fsm=LTY_FSM(io.start)
@@ -135,10 +137,13 @@ class Lty_Feature_Cache extends Component{//连通域标记
     val Col_Cnt=WaCounter(io.sData.valid&&io.sData.ready, log2Up(Config.LTY_DATA_BRAM_A_DEPTH), Config.LTY_DATA_BRAM_A_DEPTH-1)//创建输入数据的列计数器
     //Bram_Out_Cnt决定一行的结束，由于Bram2一定慢Bram1，所以选Bram2的出数据作为一行结束的标志
     //一开始只有一个计数器，但是由于有两个数据Bram，所以必须实现两个数据Bram计数器
-    val FeatureMem_02_Addr=WaCounter(io.mData1.ready&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY,log2Up(Config.LTY_DATA_BRAM_B_DEPTH), Config.LTY_DATA_BRAM_B_DEPTH-1)
+    val FeatureMem_02_Addr=WaCounter(io.mData1.ready&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY&&(!io.mData1_End_Receive),log2Up(Config.LTY_DATA_BRAM_B_DEPTH), Config.LTY_DATA_BRAM_B_DEPTH-1)
     val FeatureMem_13_Addr=WaCounter(io.mData2.ready&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY,log2Up(Config.LTY_DATA_BRAM_B_DEPTH), Config.LTY_DATA_BRAM_B_DEPTH-1)
-    val Bram_Out_Cnt=WaCounter(RegNext(io.mData2.ready)&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY, log2Up(Config.LTY_DATA_BRAM_B_DEPTH), Config.LTY_DATA_BRAM_B_DEPTH-1)//创建输出数据的列计数器
+    val Bram_Out_Cnt=WaCounter(RegNext(io.mData2.ready&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY), log2Up(Config.LTY_DATA_BRAM_B_DEPTH), Config.LTY_DATA_BRAM_B_DEPTH-1)//创建输出数据的列计数器
     //valid会在慢ready一拍，RegNext的原因：由于计数的是输出数据计数器，下层收到数据会慢一拍，所以要加一个RegNext
+    //还与上一个mData.ready的原因：下层模块处于getData 状态时才会接受数据，如果第一行完了，那么他会等第二行连通域提取结束
+    //第二行没结束，那么当前模块会处于Extract Lty状态，导致边界不稳定
+    
 
     //解决：22、9、21/19:19---由于下层是通过ready信号向上层请求数据的，所以下层的列计数器也应该是
     val Bram_Out_Row_Cnt=WaCounter(Bram_Out_Cnt.valid, log2Up(Config.LTY_ROW_NUM/2),Config.LTY_ROW_NUM/2-1)//创建输出行数计数器,记得除2，因为并行度是2
@@ -163,6 +168,7 @@ class Lty_Feature_Cache extends Component{//连通域标记
     }
    //违背逻辑的原因是避免在导入前两行的时候输出
     //也就是说，在加载第3，4行的时候，输出1，2行，加载1，2行时同理
+//Line Up fsm==============================================================================
 
 
 //建立四个数据缓存Bram=======================================================================
@@ -209,9 +215,10 @@ class Lty_Feature_Cache extends Component{//连通域标记
     //     io.mData1.valid:=False
     //     io.mData2.valid:=False
     // }
-    io.mData1.valid:=RegNext(Fsm.currentState===LTY_ENUM.EXTRACT_LTY&&io.mData1.ready)//添加后面的Fsm.currentState===LTY_ENUM.WAIT_NEXT_READY条件是因为没必要让mValid在连通域提取状态拉高拉低
-    io.mData2.valid:=RegNext(Fsm.currentState===LTY_ENUM.EXTRACT_LTY&&io.mData2.ready)//这里情况比较特殊，mValid应该由mReady驱动，也就是说，mReady不来的话，mValid不会拉高
-
+    io.mData1.valid:=RegNext(io.mData1.ready)&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY//添加后面的Fsm.currentState===LTY_ENUM.WAIT_NEXT_READY条件是因为没必要让mValid在连通域提取状态拉高拉低
+    io.mData2.valid:=RegNext(io.mData2.ready)&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY//这里情况比较特殊，mValid应该由mReady驱动，也就是说，mReady不来的话，mValid不会拉高
+//加RegNext的原因：下层ready进来的下一周期出去的数才是有效的
+//与上LTY_ENUM.EXTRACT_LTY的原因：只有在这个状态内数据才是有效的
     // io.mData1.valid:=RegNext(Data_Out_Flag)
     // io.mData2.valid:=RegNext(Data_Out_Flag)
 //最后还是决定将连通域标记矩阵放在这里面，因为出去的pixel应该和上标记一一对应
@@ -239,11 +246,10 @@ class Lty_Feature_Cache extends Component{//连通域标记
     when(Bram_Out_Row_Cnt.count<=0){
         io.Mark1Up_Out:=0//第一行出去的是0//第一行最后会出来一个xx，很奇怪
     }
-    when(Fsm.currentState===LTY_ENUM.EXTRACT_LTY){
-        io.strat_Sub_Module:=True//在这个状态下就启动连通域提取
-    }otherwise{
-        io.strat_Sub_Module:=False
-    }
+
+    val Start_Extract_Lty=Fsm.currentState===LTY_ENUM.EXTRACT_LTY&&RegNext(!(Fsm.currentState===LTY_ENUM.EXTRACT_LTY))//在这个状态下就启动连通域提取
+    io.strat_Sub_Module1:=Start_Extract_Lty
+    io.strat_Sub_Module2:=Delay(Start_Extract_Lty,10)
 }
 object MARK_ENUM extends SpinalEnum(defaultEncoding = binaryOneHot) {
     //启动信号是非常有必要的，比如第一行启动后，需要处理至少5个点后才能启动第二行的处理
@@ -383,6 +389,7 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
     val Config=MemConfig()
     val io=new Bundle{
         val start=in Bool()
+        val sData_Receive_End=out Bool()//接收完一行
         val sData=slave Stream(UInt(Config.LTY_DATA_BRAM_B_WIDTH bits))//进来的滤波后图片数据点
         val Up_mark=in UInt(Config.LTY_MARK_BRAM_WIDTH bits)//上标记，对应的当前像素点的上标记
         val Lty_Total_NUm=in UInt(log2Up(Config.LTY_PARAM_MEM_DEPTH) bits)//处理当前点时的连通域总数量，用于更新标记矩阵
@@ -413,7 +420,6 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         // val Lty_Para5_mData=out UInt(Config.LTY_PARAM5_MEM_WIDTH bits)//其实6和5一样，不知道还要不要再多开一个。。。
         // val Lty_Para6_mData=out UInt(Config.LTY_PARAM6_MEM_WIDTH bits)---注掉的原因：Dsp可以计算A*B+C,还是单独拿一个模块来处理累加计算好了
     }
-    
     io.Mark_Out:=0
     noIoPrefix()
 //状态机相关=============================================================================================
@@ -421,16 +427,19 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
     val Init_Cnt=WaCounter(Fsm.currentState === MARK_ENUM.INIT, 3, 5)//初始化计数器,数五拍
     Fsm.Init_End:=Init_Cnt.valid
     //进数据控制相关---这里的计数器没有减一，要注意⭐
-    val Pixel_In_Cnt=WaCounter(RegNext(io.sData.ready)&&io.sData.valid,log2Up(Config.LTY_DATA_BRAM_B_DEPTH),Config.LTY_DATA_BRAM_B_DEPTH-1)//当前处理的点的坐标计数器
-    io.Mark_Out_Addr:=Pixel_In_Cnt.count-1//本来是第0个点，但是拿到一个有效点后，count变成了1、但是需要关心的是0的地址，所以要减去一
+    val Pixel_In_Cnt=WaCounter(io.sData.ready,log2Up(Config.LTY_DATA_BRAM_B_DEPTH),Config.LTY_DATA_BRAM_B_DEPTH-1)//当前处理的点的坐标计数器
+    //减2不减1的原因：
+        //首先ready拉高，
+    io.Mark_Out_Addr:=Pixel_In_Cnt.count//本来是第0个点，但是拿到一个有效点后，count变成了1、但是需要关心的是0的地址，所以要减去一
         /*这里的计数器原理：首先状态位于拿数据状态，Pixel_Pos从0开始数
         当sData.fire拉高，进来一个滤波后图片数据和当前点的上标记，状态跳转到之后的状态，然后Pixel_Pos拉高
         假如只收一个数据，sData.fire拉高后下一个周期Pixel_Pos Valid也拉高，下一次拿数据状态，Pixel_Pos=1，那么这时应该退出去了
         
         反正这里不能用减一的原因是这里是先拿点再判断，而前面减一是先判断再拿点⭐
         */
-    Fsm.Row_End:=Pixel_In_Cnt.valid&&io.sData.fire//必须加一个fire,存在一种情况：当最后一个点进来后，但是
-    Fsm.Get_Data_End:=io.sData.fire&&io.sData.payload>=io.Temp_Back_Thrd//拿到一个数据结束信号拉高并同时启动三个子条件的判断，如果三个子条件都不满足，那么继续拿数据
+    Fsm.Row_End:=Pixel_In_Cnt.valid//必须加一个fire,存在一种情况：当最后一个点进来后，但是
+    Fsm.Get_Data_End:=io.sData.valid&&io.sData.payload>=io.Temp_Back_Thrd//拿到一个数据结束信号拉高并同时启动三个子条件的判断，如果三个子条件都不满足，那么继续拿数据
+    io.sData_Receive_End:=Pixel_In_Cnt.valid||Fsm.currentState===MARK_ENUM.INIT||(Fsm.currentState===MARK_ENUM.IDLE)
 //连通域条件判断相关=======================================================================================
     val Left_Mark=Vec(Reg(UInt(Config.LTY_MARK_BRAM_WIDTH bits))init(0),4)//创建四个移位寄存器，代表左边的四个标记点
     val Shift_Mark_In=UInt(Config.LTY_MARK_BRAM_WIDTH bits)
@@ -475,7 +484,7 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
 
     */
     // when(Fsm.currentState===MARK_ENUM.COND_CHOSE){//首先应该进入拿数据状态
-    //     //然后拿像素点和阈值比较
+    //然后拿像素点和阈值比较
         
     // }
     Fsm.Gen_New_Lty:=False//进入生成新连通域状态
@@ -628,7 +637,7 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
         Total_Num_Reg:=Total_Num_Reg
     }
     //Line up=======================================================
-    Lty_Mark_Up.io.start:=True//Lty_Cache_Module.io.strat_Sub_Module
+    Lty_Mark_Up.io.start:=Lty_Cache_Module.io.strat_Sub_Module1
     Lty_Mark_Up.io.sData<>Lty_Cache_Module.io.mData1
     Lty_Mark_Up.io.Lty_Total_NUm:=Total_Num_Reg
 
@@ -641,9 +650,10 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
     Lty_Mark_Up.io.Temp_Back_Mean<>io.Temp_Back_Mean
     Lty_Mark_Up.io.Temp_Back_Thrd<>io.Temp_Back_Thrd
 
+    Lty_Mark_Up.io.sData_Receive_End<>Lty_Cache_Module.io.mData1_End_Receive
     Lty_Mark_Up.io.Lty_Para_mReady:=True//待修改
     //Line Down=====================================================
-    Lty_Mark_Down.io.start:=True//Lty_Cache_Module.io.strat_Sub_Module
+    Lty_Mark_Down.io.start:=Lty_Cache_Module.io.strat_Sub_Module2
     Lty_Mark_Down.io.sData<>Lty_Cache_Module.io.mData2
     Lty_Mark_Down.io.Lty_Total_NUm:=Total_Num_Reg
 

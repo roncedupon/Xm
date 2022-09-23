@@ -24,6 +24,7 @@ case class MemConfig(){
     //一些要求：
         //⭐（已失效）stream流数据位宽要和Bram数据位宽相同，这是为了以后实现更高的并行度准备的，目前的并行度仍然为2
         //使用xilinx的Bram Ip，采用进32 bit出16 bit
+    val LTY_PARALL_LEVEL=2//连通域并行度
     val DMA_DATA_WIDTH=32//DMA
     val FEATURE_DATA_WIDTH=16//滤波后图片像素位宽
     val LTY_NUM_WIDTH=11//连通域个数数据位宽

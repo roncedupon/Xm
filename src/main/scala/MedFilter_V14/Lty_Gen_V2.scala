@@ -35,9 +35,10 @@ object LTY_ENUM extends SpinalEnum(defaultEncoding = binaryOneHot) {
   //Judge Last Row:每一行结束了都需要启动最后一行的判断
 }
 object LTY_ENUM_UP extends SpinalEnum(defaultEncoding = binaryOneHot) {
-  val WAIT_EXTRACT_LTY,EXTRACT_LTY= newElement
+  val WAIT_EXTRACT_LTY,EXTRACT_LTY,WAIT_LINE_DOWN= newElement
   //等待提取连通域
   //开始提取连通域
+  //等待下一层计算完成
 }
 case class LTY_UP_FSM(start:Bool)extends Area{
     val currentState = Reg(LTY_ENUM_UP()) init LTY_ENUM_UP.WAIT_EXTRACT_LTY
@@ -45,6 +46,7 @@ case class LTY_UP_FSM(start:Bool)extends Area{
     currentState := nextState
 
     val Extract_Lty_End=Bool()
+    val Line_Down_End=Bool()
     switch(currentState){
         is(LTY_ENUM_UP.WAIT_EXTRACT_LTY){
             when(start){
@@ -55,9 +57,16 @@ case class LTY_UP_FSM(start:Bool)extends Area{
         }
         is(LTY_ENUM_UP.EXTRACT_LTY){
             when(Extract_Lty_End){
-                nextState:=LTY_ENUM_UP.WAIT_EXTRACT_LTY
+                nextState:=LTY_ENUM_UP.WAIT_LINE_DOWN
             }otherwise{
                 nextState:=LTY_ENUM_UP.EXTRACT_LTY
+            }
+        }
+        is(LTY_ENUM_UP.WAIT_LINE_DOWN){
+            when(Line_Down_End){
+                nextState:=LTY_ENUM_UP.WAIT_EXTRACT_LTY
+            }otherwise{
+                nextState:=LTY_ENUM_UP.WAIT_LINE_DOWN
             }
         }
     }
@@ -154,6 +163,9 @@ class Lty_Feature_Cache extends Component{//连通域标记
 
         val strat_Sub_Module1=out Bool()//启动下层的连通域标记子模块
         val strat_Sub_Module2=out Bool()//启动下层的连通域标记子模块
+
+        
+
     }
     noIoPrefix()
     val Fsm=LTY_FSM(io.start)
@@ -165,7 +177,7 @@ class Lty_Feature_Cache extends Component{//连通域标记
     //一开始只有一个计数器，但是由于有两个数据Bram，所以必须实现两个数据Bram计数器
     
     val FeatureMem_13_Addr=WaCounter(io.mData2.ready&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY,log2Up(Config.LTY_DATA_BRAM_B_DEPTH), Config.LTY_DATA_BRAM_B_DEPTH-1)
-    val Bram_Out_Cnt=WaCounter(RegNext(io.mData2.ready&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY), log2Up(Config.LTY_DATA_BRAM_B_DEPTH), Config.LTY_DATA_BRAM_B_DEPTH-1)//创建输出数据的列计数器
+    val Bram_Out_Cnt=WaCounter(io.mData2.ready&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY, log2Up(Config.LTY_DATA_BRAM_B_DEPTH), Config.LTY_DATA_BRAM_B_DEPTH-1)//创建输出数据的列计数器
     //valid会在慢ready一拍，RegNext的原因：由于计数的是输出数据计数器，下层收到数据会慢一拍，所以要加一个RegNext
     //还与上一个mData.ready的原因：下层模块处于getData 状态时才会接受数据，如果第一行完了，那么他会等第二行连通域提取结束
     //第二行没结束，那么当前模块会处于Extract Lty状态，导致边界不稳定
@@ -183,13 +195,16 @@ class Lty_Feature_Cache extends Component{//连通域标记
         //所有行都缓存完了，但是连通域还没被提取完，计算也没计算完，所以last_Row不能作为计算结束然后进入idle的标志
         //于是在状态机里又加了一些其他的判断
     Fsm.Judge2Row_Col_End:=Col_Cnt.valid//缓存完开头两行中的一行
-    Fsm.Load_2_Row_End:=Delay(Row_Cnt_All.count>1,10)//开头两行被缓存完了，行计数器为2的时候那么就加载完两行了,不能大于等于一，因为加载完第0行后，Row_Cnt就已经是1了
+    
  
     Fsm.Col_End:=Bram_Out_Cnt.valid//发完了一行数据，也就是发送数据计数器数完了2040，表面上发送完一行，实际上处理完了两行
+    //regNext的原因：由于当ready拉高，地址开始自增，但是出去的数据会慢一拍，为了不丢掉最后一个数，所以regnext
 //===================================================================================================================
     val Fsm_LineUp=LTY_UP_FSM(Row_Cnt_All.count>1)//缓存完开头两行，就启动上一行的连通域提取
     val FeatureMem_02_Addr=WaCounter(io.mData1.ready&&Fsm_LineUp.currentState===LTY_ENUM_UP.EXTRACT_LTY,log2Up(Config.LTY_DATA_BRAM_B_DEPTH), Config.LTY_DATA_BRAM_B_DEPTH-1)
+    Fsm.Load_2_Row_End:=Row_Cnt_All.count>1&&(FeatureMem_02_Addr.count>6)//开头两行被缓存完了，行计数器为2的时候那么就加载完两行了,不能大于等于一，因为加载完第0行后，Row_Cnt就已经是1了
     Fsm_LineUp.Extract_Lty_End:=FeatureMem_02_Addr.valid//数据发完后就进入idle状态
+    Fsm_LineUp.Line_Down_End:=Bram_Out_Cnt.valid
 //一个Bram写选择器，一个Bram读选择器
     val Bram_Read_Chose=Reg(Bool())init(False)//要准确控制才行，是读0，1还是2，3
     //4个Bram的作用是在计算前两行的时候加载后两行数据
@@ -245,8 +260,8 @@ class Lty_Feature_Cache extends Component{//连通域标记
     //     io.mData1.valid:=False
     //     io.mData2.valid:=False
     // }
-    io.mData1.valid:=RegNext(io.mData1.ready)&&Fsm_LineUp.currentState===LTY_ENUM_UP.EXTRACT_LTY//添加后面的Fsm.currentState===LTY_ENUM.WAIT_NEXT_READY条件是因为没必要让mValid在连通域提取状态拉高拉低
-    io.mData2.valid:=RegNext(io.mData2.ready)&&Fsm.currentState===LTY_ENUM.EXTRACT_LTY//这里情况比较特殊，mValid应该由mReady驱动，也就是说，mReady不来的话，mValid不会拉高
+    io.mData1.valid:=RegNext(io.mData1.ready)//添加后面的Fsm.currentState===LTY_ENUM.WAIT_NEXT_READY条件是因为没必要让mValid在连通域提取状态拉高拉低
+    io.mData2.valid:=RegNext(io.mData2.ready)//这里情况比较特殊，mValid应该由mReady驱动，也就是说，mReady不来的话，mValid不会拉高
 //加RegNext的原因：下层ready进来的下一周期出去的数才是有效的
 //与上LTY_ENUM.EXTRACT_LTY的原因：只有在这个状态内数据才是有效的
     // io.mData1.valid:=RegNext(Data_Out_Flag)
@@ -283,8 +298,8 @@ class Lty_Feature_Cache extends Component{//连通域标记
 object MARK_ENUM extends SpinalEnum(defaultEncoding = binaryOneHot) {
     //启动信号是非常有必要的，比如第一行启动后，需要处理至少5个点后才能启动第二行的处理
     //也就是说，多并行度下，第二行的处理必须慢第一行5个标记点处理的时间
-  val IDLE, INIT, GET_DATA,GEN_NEW_LTY,COND_CHOSE,UP1_COND,UP0_LEFT1,UPDATA_LEFT1,UPDATA_LEFT2,UPDATA_LEFT3,UPDATA_LEFT4= newElement
-    /*三种条件，
+  val IDLE, INIT, GET_DATA,GEN_NEW_LTY,UP1_COND,UP0_LEFT1,UPDATA_LEFT1,UPDATA_LEFT2,UPDATA_LEFT3,UPDATA_LEFT4= newElement
+    /*三种条件，COND_CHOSE,
         GEN_NEW_LTY  上，左都为0---新建一个连通域,生成新的连通域
         UP1_COND:  上不为0---处理左边四个点，Up is 1 condition
         UP0_LEFT1：上为0，左不为0---单独处理当前点  
@@ -332,25 +347,35 @@ class Mark_Fsm(start:Bool) extends Area{
             }
         }
         is(MARK_ENUM.GET_DATA){
-            when(Row_End){//一行标记完了，进入Idle状态
-                nextState:=MARK_ENUM.IDLE 
-            }elsewhen(Get_Data_End){//也就是sData.fire拉高了
-                nextState:=MARK_ENUM.COND_CHOSE//进入三个条件选择状态
+            when(Get_Data_End){//也就是sData.fire拉高了
+                when(Up1_Cond){
+                    nextState:=MARK_ENUM.UP1_COND
+                }elsewhen(Up0_Left1){
+                    nextState:=MARK_ENUM.UP0_LEFT1
+                }elsewhen(Gen_New_Lty){//Gen_New_Lty
+                    nextState:=MARK_ENUM.GEN_NEW_LTY
+                }otherwise{//这一条件就是pixel小于阈值，直接不更新当前点，跳过
+                    nextState:=MARK_ENUM.GET_DATA
+                }
+            }elsewhen(Row_End){
+                nextState:=MARK_ENUM.IDLE
             }otherwise{
                 nextState:=MARK_ENUM.GET_DATA
             }
         }
-        is(MARK_ENUM.COND_CHOSE){//多一个状态就多一个状态吧。。。
-            when(Up1_Cond){
-                nextState:=MARK_ENUM.UP1_COND
-            }elsewhen(Up0_Left1){
-                nextState:=MARK_ENUM.UP0_LEFT1
-            }elsewhen(Gen_New_Lty){//Gen_New_Lty
-                nextState:=MARK_ENUM.GEN_NEW_LTY
-            }otherwise{//这一条件就是pixel小于阈值，直接不更新当前点，跳过
-                nextState:=MARK_ENUM.GET_DATA
-            }
-        }
+        // is(MARK_ENUM.COND_CHOSE){//多一个状态就多一个状态吧。。。
+        //     when(Up1_Cond){
+        //         nextState:=MARK_ENUM.UP1_COND
+        //     }elsewhen(Up0_Left1){
+        //         nextState:=MARK_ENUM.UP0_LEFT1
+        //     }elsewhen(Gen_New_Lty){//Gen_New_Lty
+        //         nextState:=MARK_ENUM.GEN_NEW_LTY
+        //     }elsewhen(Row_End){
+        //         nextState:=MARK_ENUM.IDLE
+        //     }otherwise{//这一条件就是pixel小于阈值，直接不更新当前点，跳过
+        //         nextState:=MARK_ENUM.GET_DATA
+        //     }
+        // }
         is(MARK_ENUM.GEN_NEW_LTY){
             when(Gen_New_Lty_End){
                 nextState:=MARK_ENUM.GET_DATA
@@ -446,9 +471,9 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
     val Init_Cnt=WaCounter(Fsm.currentState === MARK_ENUM.INIT, 3, 5)//初始化计数器,数五拍
     Fsm.Init_End:=Init_Cnt.valid
     //进数据控制相关---这里的计数器没有减一，要注意⭐
-    val Pixel_In_Cnt=WaCounter(RegNext(io.sData.ready),log2Up(Config.LTY_DATA_BRAM_B_DEPTH),Config.LTY_DATA_BRAM_B_DEPTH-1)//当前处理的点的坐标计数器
-    //减2不减1的原因：
-        //首先ready拉高，
+    val Pixel_In_Cnt=WaCounter(RegNext(io.sData.ready)&&Fsm.currentState===MARK_ENUM.GET_DATA,log2Up(Config.LTY_DATA_BRAM_B_DEPTH),Config.LTY_DATA_BRAM_B_DEPTH-1)//当前处理的点的坐标计数器
+    //不等valid的原因：只有ready拉高valid才会拉高
+
     io.Mark_Out_Addr:=Pixel_In_Cnt.count//本来是第0个点，但是拿到一个有效点后，count变成了1、但是需要关心的是0的地址，所以要减去一
         /*这里的计数器原理：首先状态位于拿数据状态，Pixel_Pos从0开始数
         当sData.fire拉高，进来一个滤波后图片数据和当前点的上标记，状态跳转到之后的状态，然后Pixel_Pos拉高
@@ -457,7 +482,7 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         反正这里不能用减一的原因是这里是先拿点再判断，而前面减一是先判断再拿点⭐
         */
     Fsm.Row_End:=Pixel_In_Cnt.valid//必须加一个fire,存在一种情况：当最后一个点进来后，但是
-    Fsm.Get_Data_End:=io.sData.valid&&io.sData.payload>=io.Temp_Back_Thrd//拿到一个数据结束信号拉高并同时启动三个子条件的判断，如果三个子条件都不满足，那么继续拿数据
+    Fsm.Get_Data_End:=RegNext(io.sData.ready)&&io.sData.payload>=io.Temp_Back_Thrd&&Fsm.currentState===MARK_ENUM.GET_DATA//拿到一个数据结束信号拉高并同时启动三个子条件的判断，如果三个子条件都不满足，那么继续拿数据
     io.sData_Receive_End:=Pixel_In_Cnt.valid||Fsm.currentState===MARK_ENUM.INIT||(Fsm.currentState===MARK_ENUM.IDLE)
 //连通域条件判断相关=======================================================================================
     val Left_Mark=Vec(Reg(UInt(Config.LTY_MARK_BRAM_WIDTH bits))init(0),4)//创建四个移位寄存器，代表左边的四个标记点
@@ -606,7 +631,7 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
     
     // io.J_Out:=Pixel_In_Cnt.count-1//列标
 //sData握手信号控制
-    io.sData.ready:=Fsm.currentState===MARK_ENUM.GET_DATA//只要在拿数据状态下，sReady一之拉高，直到拿到一个数据
+    io.sData.ready:=Fsm.currentState===MARK_ENUM.GET_DATA&&(!Fsm.Get_Data_End)//只要在拿数据状态下，sReady一之拉高，直到拿到一个数据
 }
 
 class Feature_Mark extends Component{//整合图片缓存模块和标记模块

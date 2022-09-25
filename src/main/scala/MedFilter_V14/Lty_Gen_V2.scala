@@ -485,7 +485,7 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
     val Shift_Mark_In=UInt(Config.LTY_MARK_BRAM_WIDTH bits)
     val Shift_Start=Bool()//启动移位寄存器
     val Shift_Start_First=Bool()//控制第一个寄存器的
-    Shift_Start:=True
+    Shift_Start:=(!Fsm.Get_Data_End)
     Shift_Start_First:=True
     Shift_Mark_In:=0
 //     for(i<-0 to 2){

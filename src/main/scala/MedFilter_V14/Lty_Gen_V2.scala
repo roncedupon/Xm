@@ -84,6 +84,7 @@ case class LTY_FSM(start: Bool) extends Area {
   val Col_End=Bool()//输出完一行,这里要注意，这是输出完一行的意思
   val Load_2_Row_End=Bool()//加载完两行
 
+  val start_Line_Down_Extract_Lty=Bool()//启动第二行的连通域提取，加一个这个条件是因为第二行的连通域启动必须慢第一行至少五个点
   val Judge2Row_Col_End=Bool()//判断加载前两行的一行是否结束
   switch(currentState){
     is(LTY_ENUM.IDLE){
@@ -111,7 +112,11 @@ case class LTY_FSM(start: Bool) extends Area {
         when(last_Row){
             nextState:=LTY_ENUM.IDLE//输出完最后一行
         }elsewhen(Load_2_Row_End){
-            nextState:=LTY_ENUM.EXTRACT_LTY//等待下面的计算模块准备好接受计算数据
+            when(start_Line_Down_Extract_Lty){
+                nextState:=LTY_ENUM.EXTRACT_LTY//等待下面的计算模块准备好接受计算数据
+            }otherwise{
+                nextState:=LTY_ENUM.JUDGE_LAST_ROW
+            }       
         }otherwise{
             nextState:=LTY_ENUM.LOAD_2_ROWS//前两行没加载完继续加载前两行
         }
@@ -198,11 +203,12 @@ class Lty_Feature_Cache extends Component{//连通域标记
     
  
     Fsm.Col_End:=Bram_Out_Cnt.valid//发完了一行数据，也就是发送数据计数器数完了2040，表面上发送完一行，实际上处理完了两行
-    //regNext的原因：由于当ready拉高，地址开始自增，但是出去的数据会慢一拍，为了不丢掉最后一个数，所以regnext
 //===================================================================================================================
     val Fsm_LineUp=LTY_UP_FSM(Row_Cnt_All.count>1)//缓存完开头两行，就启动上一行的连通域提取
+    
     val FeatureMem_02_Addr=WaCounter(io.mData1.ready&&Fsm_LineUp.currentState===LTY_ENUM_UP.EXTRACT_LTY,log2Up(Config.LTY_DATA_BRAM_B_DEPTH), Config.LTY_DATA_BRAM_B_DEPTH-1)
-    Fsm.Load_2_Row_End:=Row_Cnt_All.count>1&&(FeatureMem_02_Addr.count>6)//开头两行被缓存完了，行计数器为2的时候那么就加载完两行了,不能大于等于一，因为加载完第0行后，Row_Cnt就已经是1了
+    Fsm.Load_2_Row_End:=Row_Cnt_All.count>1//开头两行被缓存完了，行计数器为2的时候那么就加载完两行了,不能大于等于一，因为加载完第0行后，Row_Cnt就已经是1了
+    Fsm.start_Line_Down_Extract_Lty:=(FeatureMem_02_Addr.count>6)
     Fsm_LineUp.Extract_Lty_End:=FeatureMem_02_Addr.valid//数据发完后就进入idle状态
     Fsm_LineUp.Line_Down_End:=Bram_Out_Cnt.valid
 //一个Bram写选择器，一个Bram读选择器
@@ -242,7 +248,9 @@ class Lty_Feature_Cache extends Component{//连通域标记
         }else{//1,3，第二行
             FeatureMem(i).io.addrb:=FeatureMem_13_Addr.count//
         }
-        FeatureMem(i).io.enb:=True//以后有需要在处理
+        FeatureMem(i).io.enb:=True//Fsm.currentState===LTY_ENUM.EXTRACT_LTY//以后有需要在处理
+        //之前这里写的是一直True，但是仿真会报读写冲突的警告，因为每次在0地址都是又读又写
+        //还是得True，不然不对
     }
     io.mData1.payload:=Bram_Read_Chose?FeatureMem(2).io.doutb|FeatureMem(0).io.doutb//输出数据选择器
     io.mData2.payload:=Bram_Read_Chose?FeatureMem(3).io.doutb|FeatureMem(1).io.doutb//输出数据选择器

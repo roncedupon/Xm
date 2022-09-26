@@ -568,7 +568,7 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
     
     }        
 //生成新连通域(上，左都为0)==============================================================================
-    io.Mark_Out_Valid:=True//从False改为一直True的原因：如果不满足三个条件，它也应该有效，只不过它的值是0
+    io.Mark_Out_Valid:=(!(Fsm.currentState===MARK_ENUM.IDLE||Fsm.currentState===MARK_ENUM.INIT))//从False改为一直True的原因：如果不满足三个条件，它也应该有效，只不过它的值是0
     io.Lty_Para_mValid:=True
     Fsm.Gen_New_Lty_End:=io.Lty_Para_mReady&&io.Lty_Para_mValid//修改原因：需要数据发过去才能退出这个状态Delay(Fsm.currentState===MARK_ENUM.GEN_NEW_LTY,Config.DSP_PIPELINE_STAGE)//控制状态结束
     when(Fsm.currentState===MARK_ENUM.GEN_NEW_LTY){//这部分代码主要处理状态结束

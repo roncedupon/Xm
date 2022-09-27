@@ -19,7 +19,7 @@ class Lty_Bram extends BlackBox{//黑盒，入32bit，出16 bit
         val addrb=in UInt(log2Up(Config.LTY_DATA_BRAM_B_DEPTH) bits)
         val clkb=in Bool()
         val doutb=out UInt((Config.LTY_DATA_BRAM_B_WIDTH) bits)
-        val enb=in Bool()
+        // val enb=in Bool()
         
     }
 
@@ -245,14 +245,18 @@ class Lty_Feature_Cache extends Component{//连通域标记
     for(i<-0 to 3){
         if(i%2==0){//0,2,第一行
             FeatureMem(i).io.addrb:=FeatureMem_02_Addr.count//02代表的是0，2Bram
+            // FeatureMem(i).io.enb:=Fsm_LineUp.currentState===LTY_ENUM_UP.EXTRACT_LTY&&Bram_Read_Chose//以后有需要在处理
         }else{//1,3，第二行
             FeatureMem(i).io.addrb:=FeatureMem_13_Addr.count//
         }
-        FeatureMem(i).io.enb:=True//Fsm.currentState===LTY_ENUM.EXTRACT_LTY//以后有需要在处理
-        //之前这里写的是一直True，但是仿真会报读写冲突的警告，因为每次在0地址都是又读又写
-        //还是得True，不然不对
+        // FeatureMem(i).io.enb:=True//以后有需要在处理
     }
-    io.mData1.payload:=Bram_Read_Chose?FeatureMem(2).io.doutb|FeatureMem(0).io.doutb//输出数据选择器
+    //如果Bram_Read_Chose=0，选01，打开01的读使能，关闭23的读使能
+    // FeatureMem(0).io.enb:=Fsm.currentState===LTY_ENUM.EXTRACT_LTY&&(!Bram_Read_Chose)//以后有需要在处理
+    // FeatureMem(1).io.enb:=Fsm.currentState===LTY_ENUM.EXTRACT_LTY&&(!Bram_Read_Chose)//以后有需要在处理
+    // FeatureMem(2).io.enb:=Fsm.currentState===LTY_ENUM.EXTRACT_LTY&&(Bram_Read_Chose)//以后有需要在处理
+    // FeatureMem(3).io.enb:=Fsm.currentState===LTY_ENUM.EXTRACT_LTY&&(Bram_Read_Chose)//以后有需要在处理
+    io.mData1.payload:=Bram_Read_Chose?FeatureMem(2).io.doutb|FeatureMem(0).io.doutb//Bram_Read_Chose=0，选0，1
     io.mData2.payload:=Bram_Read_Chose?FeatureMem(3).io.doutb|FeatureMem(1).io.doutb//输出数据选择器
 //mux必须是圆括号
 //控制数据输入输出

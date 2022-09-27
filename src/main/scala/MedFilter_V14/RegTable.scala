@@ -19,31 +19,31 @@ class RegTable extends Component{
 	//这里的只读和只写对应的是master那边的只读和只写
 	val Reg0  = bus.newReg(doc="Ps Write Start signal to Pl,WO")
 	val Reg1  = bus.newReg(doc="Pl ends computing and writes end Signal back to Ps,RO")
-    val Reg2  = bus.newReg(doc="Pl Lights up Led ,test")
+    val Reg2  = bus.newReg(doc="PS Lights up Led ,test")
 
 
-	val Sumx1Reg=bus.newReg(doc="Med Sort Threshold 1 32 bits")
-	val Sumx2Reg=bus.newReg(doc="Med Sort Threshold 2 32 bits")
+	val Sumx1Reg=bus.newReg(doc="MedFilter parameter1 32 bits")
+	val Sumx2Reg=bus.newReg(doc="MedFilter parameter2 32 bits")
 	val Lty_Out_Reg=bus.newReg(doc="Lty Num output")
 	val temp_back_mean_Reg=bus.newReg(doc="temp_back_mean (float) 32 bits")
 //temp_back_mean=sumX / sumNum;
-	val temp_back_thrd_Reg=bus.newReg(doc="temp_back_thrd (float) 32 bits\ntemp_back_thrd= temp_back_mean + Thrd_Times（5) * temp_back_std( sqrt(sumX2/sumNum - temp_back_mean^2));")
+	val temp_back_thrd_Reg=bus.newReg(doc="temp_back_thrd (float) 32 bits\ntemp_back_thrd= temp_back_mean + Thrd_Times(5) * temp_back_std( sqrt(sumX2/sumNum - temp_back_mean^2));")
 //temp_back_thrd= temp_back_mean + Thrd_Times（5) * temp_back_std( sqrt(sumX2/sumNum - temp_back_mean^2));
 
 
 
-	val Start_Compute=Reg0.field(Bool(),WO,doc="O:Ps writes start signal to pl").asOutput()
-	val Start_Gen_Lty=Reg0.field(Bool(),WO,doc="O:Start Map triangle").asOutput()
-	val Start_Map=Reg0.field(Bool(),WO,doc="O:Start Generating Lty").asOutput()
-	val Switch_Stream=Reg0.field(Bits(2 bits),WO,doc="Stream port switch").asOutput()//这里需要改成通过AXIS_SWITCH的端口数自动生成位宽
+	val Start_MedFilter=Reg0.field(Bool(),WO,doc="O:Start medFilter operation").asOutput()
+	val Start_Gen_Lty=Reg0.field(Bool(),WO,doc="O:Start mapping triangle").asOutput()
+	val Start_Map=Reg0.field(Bool(),WO,doc="O:Start generating Lty").asOutput()
+	val Switch_Stream=Reg0.field(Bits(2 bits),WO,doc="Axi Stream port switch:0->MedSort;1->Gen_Lty;2->Map").asOutput()//这里需要改成通过AXIS_SWITCH的端口数自动生成位宽
 	//val Read_Ps_Num=Reg0.field(Bits(10 bit),WO,doc="pl 从ps ddr读数据的数量").asInput()--报错
 	val Sign_Flag=Reg1.field(Bool(),WO,doc="O:SignFlag").asOutput()
     
-	val Sumx1=Sumx1Reg.field(SInt(32 bits),RO,doc="Med Sort Threshold 1 32 bits").asInput()
-	val Sumx2=Sumx2Reg.field(UInt(32 bits),RO,doc="Med Sort Threshold 1 32 bits").asInput()
+	val Sumx1=Sumx1Reg.field(SInt(32 bits),RO,doc="I:MedFilter parameter1 16 bits").asInput()
+	val Sumx2=Sumx2Reg.field(UInt(32 bits),RO,doc="I:MedFilter parameter2 16 bits").asInput()
 
-	val temp_back_mean=temp_back_mean_Reg.field(UInt(16 bits),WO,doc="temp_back_mean (float) 32 bits").asOutput()
-	val temp_back_thrd=temp_back_thrd_Reg.field(UInt(16 bits),WO,doc="temp_back_thrd (float) 32 bits").asOutput()
+	val temp_back_mean=temp_back_mean_Reg.field(UInt(16 bits),WO,doc="O:temp_back_mean (double to U16) 16 bits").asOutput()
+	val temp_back_thrd=temp_back_thrd_Reg.field(UInt(16 bits),WO,doc="O:temp_back_thrd (double to U16) 16 bits").asOutput()
 	//先启动连通域计算和连通域数据接受，连通域那边算完了，拿到连通域的数量，开始收回连通域数据
 	val Lty_End=Lty_Out_Reg.field(Bool(),RO).asInput()//连通域计算结束信号
 	val Lty_Num=Lty_Out_Reg.field(UInt(16 bits),RO).asInput()//连通域数量

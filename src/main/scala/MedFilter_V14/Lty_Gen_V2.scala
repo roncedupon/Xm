@@ -20,7 +20,7 @@ class Lty_Bram extends BlackBox{//黑盒，入32bit，出16 bit
         val clkb=in Bool()
         val doutb=out UInt((Config.LTY_DATA_BRAM_B_WIDTH) bits)
         // val enb=in Bool()
-        
+        //A口读优先，B口enb一直有效，A口64 bit进
     }
 
     noIoPrefix()

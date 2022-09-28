@@ -20,7 +20,7 @@ class Lty_Bram extends BlackBox{//黑盒，入32bit，出16 bit
         val clkb=in Bool()
         val doutb=out UInt((Config.LTY_DATA_BRAM_B_WIDTH) bits)
         // val enb=in Bool()
-        //A口读优先，B口enb一直有效，A口64 bit进
+        //A口读优先，B口enb一直有效，A口64 bit进，B出16bit
     }
 
     noIoPrefix()
@@ -483,14 +483,14 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
     val Fsm=new Mark_Fsm(io.start)//&&(!RegNext(io.start))
     val Init_Cnt=WaCounter(Fsm.currentState === MARK_ENUM.INIT, 3, 5)//初始化计数器,数五拍
     Fsm.Init_End:=Init_Cnt.valid
-    val Pixel_In_Cnt=WaCounter(RegNext(io.sData.ready)&&Fsm.currentState===MARK_ENUM.GET_DATA,log2Up(Config.LTY_DATA_BRAM_B_DEPTH),Config.LTY_DATA_BRAM_B_DEPTH-1)//当前处理的点的坐标计数器
+    val Pixel_In_Cnt=WaCounter(io.sData.valid&&Fsm.currentState===MARK_ENUM.GET_DATA,log2Up(Config.LTY_DATA_BRAM_B_DEPTH),Config.LTY_DATA_BRAM_B_DEPTH-1)//当前处理的点的坐标计数器
     //不等valid的原因：只有ready拉高valid才会拉高
 
     io.Mark_Out_Addr:=RegNext(Pixel_In_Cnt.count)//本来是第0个点，但是拿到一个有效点后，count变成了1、但是需要关心的是0的地址，所以要减去一
 //regNext的原因：Pixel_in_cnt代表当前处理的点的坐标
 //进入标记状态会慢一拍，所以要regnext一下
     Fsm.Row_End:=Pixel_In_Cnt.valid
-    Fsm.Get_Data_End:=RegNext(io.sData.ready)&&io.sData.payload>=io.Temp_Back_Thrd&&Fsm.currentState===MARK_ENUM.GET_DATA//拿到一个数据结束信号拉高并同时启动三个子条件的判断，如果三个子条件都不满足，那么继续拿数据
+    Fsm.Get_Data_End:=io.sData.valid&&io.sData.payload>=io.Temp_Back_Thrd&&Fsm.currentState===MARK_ENUM.GET_DATA//拿到一个数据结束信号拉高并同时启动三个子条件的判断，如果三个子条件都不满足，那么继续拿数据
     io.sData_Receive_End:=Pixel_In_Cnt.valid||Fsm.currentState===MARK_ENUM.INIT||(Fsm.currentState===MARK_ENUM.IDLE)
 //连通域条件判断相关=======================================================================================
     val Left_Mark=Vec(Reg(UInt(Config.LTY_MARK_BRAM_WIDTH bits))init(0),5)//创建四个移位寄存器，代表左边的四个标记点
@@ -560,10 +560,10 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         Fsm.Up0_Left1:=False
         Fsm.Up1_Cond:=False
     }
-    io.New_Lty_Gen:=False
+    io.New_Lty_Gen:=Fsm.currentState===MARK_ENUM.GEN_NEW_LTY&&RegNext(!(Fsm.currentState===MARK_ENUM.GEN_NEW_LTY))
     when(Fsm.currentState===MARK_ENUM.GEN_NEW_LTY) {//上面和左边都没被标记
         io.Mark_Out:=io.Lty_Total_NUm+1//那么这是一个新的连通域、
-        io.New_Lty_Gen:=True
+
         Shift_Mark_In:=io.Lty_Total_NUm+1
     }
     when(Fsm.currentState===MARK_ENUM.UP0_LEFT1) {//上面没被标记，左边被标记了,那么当前点的标记就应该和左边点标记一样
@@ -664,7 +664,72 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
     io.sData.ready:=Fsm.currentState===MARK_ENUM.GET_DATA&&(!Fsm.Get_Data_End)//只要在拿数据状态下，sReady一之拉高，直到拿到一个数据
     //⭐⭐⭐⭐⭐⭐在后面加了一个(!Fsm.Get_Data_End)--->调了一星期的bug由此终结
 }
+//===============================================================================================================================================
+class Lty_Mul(A_Wdith:Int,B_Width:Int,P_Width:Int) extends BlackBox{
+    val io=new Bundle{//component要求out有驱动，但是black box不要求out的驱动
+        val CLK=in Bool()
+        val A=in UInt(A_Wdith bits)
+        val B=in UInt(B_Width bits)
+        val P=out UInt(P_Width bits)
+    }
+    noIoPrefix()
+    mapClockDomain(clock=io.CLK)
+}
+class Compute_Sub_Module(Left_Shift:Int,Pixel_In_Width:Int,Mul_Out_Width:Int) extends Component{
+    //xilinx Ip核
+    /*
+    Pixel_In_Width:滤波后图片数据位宽,
+    Mul_Out_Width:做完乘法后的结果位宽
+        Bram读出来的数据也是这个位宽，
+        比如图片16bit，左移10位，那么乘法器进去的数据就是26bit，乘法输出就至少52bit，考虑到还有累加和，所以直接用64bit来表示
+    Mem_Depth:这个深度需要提前约定好，不能少，先设个1024试试
+        最差的情况：上下左右隔一个点一个连通域，这样的话会产生1024*1024个连通域
+    */
+    //只用来算平方
+    //连通域参数计算子模块---需要实现的三种功能：流水乘法，读出并累加，写回
+    //像素值左移10位，16 bit-->26 bit
+    val io=new Bundle{
+        val Pixel_In=in UInt(Pixel_In_Width bits)
+        val Temp_Back_Mean=in UInt(16 bits) 
+        val Sign_Flag=in Bool()//0减1加
+        val Pow_Out=out UInt(Mul_Out_Width bits)
+    }
+    noIoPrefix()
+    val Multiply_Data_In=io.Sign_Flag?((io.Pixel_In<<Left_Shift)-io.Temp_Back_Mean)|((io.Pixel_In<<Left_Shift)+io.Temp_Back_Mean)//Multiply_Data_In--16 bit;根据数据分布，似乎不会有溢出的可能
+    val Pow_Multiper=new Lty_Mul(Pixel_In_Width+Left_Shift,Pixel_In_Width+Left_Shift,52)
+    Pow_Multiper.io.A:=Multiply_Data_In
+    Pow_Multiper.io.B:=Multiply_Data_In
+    io.Pow_Out:=Pow_Multiper.io.P
+    //新建连通域直接写入乘法结果,其他情况则需写入累加和
 
+
+    //行
+    val Mul_I=new Lty_Mul(52,11,64)//2048--11bit
+
+
+    //列
+    val Mul_J_0=new Lty_Mul(52,11,64)//2048--11bit
+    val Mul_J_1=new Lty_Mul(52,11,64)//2048--11bit
+    val Mul_J_2=new Lty_Mul(52,11,64)//2048--11bit
+    val Mul_J_3=new Lty_Mul(52,11,64)//2048--11bit
+    val Mul_J_4=new Lty_Mul(52,11,64)//2048--11bit
+    val Mul_J_5=new Lty_Mul(52,11,64)//2048--11bit
+}
+// class Compute_Lty extends Component{
+//     //
+//     val io=new Bundle{
+//         val Pixel_In=in UInt(16 bits)
+//         val Temp_Back_Mean=in UInt(16 bits) 
+//         val Sign_Flag=in Bool()//0减1加
+//     }
+// val Multiply1=new Compute_Sub_Module_Pow(10,16,64)//10bit左移，16 bit输入，64 bit输出
+//     Multiply1.io.Pixel_In:=io.Pixel_In
+//     Multiply1.io.Sign_Flag:=io.Sign_Flag
+//     Multiply1.io.Temp_Back_Mean:=io.Temp_Back_Mean
+    
+// }
+
+//===============================================================================================================================================
 class Feature_Mark extends Component{//整合图片缓存模块和标记模块
     val Lty_Cache_Module=new Lty_Feature_Cache
     val Lty_Mark_Up=new Lty_Mark_Sub_Module
@@ -703,7 +768,8 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
     Lty_Mark_Up.io.Temp_Back_Thrd<>io.Temp_Back_Thrd
 
     Lty_Mark_Up.io.sData_Receive_End<>Lty_Cache_Module.io.mData1_End_Receive
-    Lty_Mark_Up.io.Lty_Para_mReady:=True//待修改
+    val Test_Cnt=WaCounter(True,32,512-1)
+    Lty_Mark_Up.io.Lty_Para_mReady:=Test_Cnt.valid//待修改
     //Line Down=====================================================
     Lty_Mark_Down.io.start:=Lty_Cache_Module.io.strat_Sub_Module2
     Lty_Mark_Down.io.sData<>Lty_Cache_Module.io.mData2
@@ -717,7 +783,7 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
     Lty_Mark_Down.io.Sign_Flag<>io.Sign_Flag
     Lty_Mark_Down.io.Temp_Back_Mean<>io.Temp_Back_Mean
     Lty_Mark_Down.io.Temp_Back_Thrd<>io.Temp_Back_Thrd    
-    Lty_Mark_Down.io.Lty_Para_mReady:=True//待修改
+    Lty_Mark_Down.io.Lty_Para_mReady:=Test_Cnt.valid//待修改
 
 
 
@@ -732,25 +798,4 @@ object LtyGen extends App {
 //    SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Lty_Mark_Gen)
    SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Feature_Mark)
 }
-
-
-
-    // when(io.Up_mark === 0 && Left_Mark(0)===0) {//上面和左边都没被标记
-    //     io.Mark_Out:=io.Lty_Total_NUm+1//那么这是一个新的连通域、
-    //     io.New_Lty_Gen:=True
-    //     Shift_Mark_In:=io.Lty_Total_NUm+1
-    //     Fsm.Gen_New_Lty:=True//进入生成新连通域状态
-    //     Shift_Start:=True//更新移位寄存器的值供下一个点
-    //     // Fsm.Up0_Left1:=False//进入上为0左不为0状态
-    //     // Fsm.Up1_Cond:=False//进入上不为0状态，处理左边四个点
-    // }.elsewhen(io.Up_mark === 0 && Left_Mark(0)=/=0) {//上面没被标记，左边被标记了,那么当前点的标记就应该和左边点标记一样
-    //     io.Mark_Out:=Left_Mark(0)//将当前点的标记点更新为左标记点
-    //     Shift_Mark_In:=Left_Mark(0)
-    //     // Fsm.Gen_New_Lty:=False//进入生成新连通域状态
-    //     Fsm.Up0_Left1:=True//进入上为0左不为0状态
-    //     // Fsm.Up1_Cond:=False//进入上不为0状态，处理左边四个点
-    // }.elsewhen(io.Up_mark =/= 0 && Left_Mark(0) === 0) {//上面点被标记，左边点没被标记，将当前点标记为上面的点
-    //     io.Mark_Out:=io.Up_mark
-    //     Shift_Mark_In:=io.Up_mark//Shift_Mark_In是一个wire类型
-    //     Fsm.Up1_Cond:=True//进入上不为0状态，处理左边四个点                
-    // }        
+        

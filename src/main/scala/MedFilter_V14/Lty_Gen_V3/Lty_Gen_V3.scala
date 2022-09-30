@@ -572,6 +572,8 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         Fsm.Gen_New_Lty:=False
         Fsm.Up0_Left1:=False
         Fsm.Up1_Cond:=True
+        Shift_Start:=False
+        Shift_Start_First:=False
     }elsewhen(io.Up_mark === 0 && Left_Mark(1) =/= 0){
         Fsm.Gen_New_Lty:=False
         Fsm.Up0_Left1:=True

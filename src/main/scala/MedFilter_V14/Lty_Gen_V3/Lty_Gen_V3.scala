@@ -5,6 +5,7 @@ import MedFilter_V12.MemConfig
 import Archive.WaCounter
 import spinal.lib.master
 import spinal.lib.Delay
+import scala.collection.script.Start
 class Lty_Bram extends BlackBox{//黑盒，入32bit，出16 bit
     val Config=MemConfig()//浮点乘法器
     val io=new Bundle{//component要求out有驱动，但是black box不要求out的驱动
@@ -228,7 +229,7 @@ class Lty_Feature_Cache extends Component{//连通域标记
     val FeatureMem_02_Addr=WaCounter(io.mData1.ready&&Fsm_LineUp.currentState===LTY_ENUM_UP.EXTRACT_LTY,log2Up(Config.LTY_DATA_BRAM_B_DEPTH), Config.LTY_DATA_BRAM_B_DEPTH-1)
     Fsm.Load_2_Row_End:=Row_Cnt_All.count>1//开头两行被缓存完了，行计数器为2的时候那么就加载完两行了,不能大于等于一，因为加载完第0行后，Row_Cnt就已经是1了
     Fsm.Next_Ready:=io.mData2.ready
-    Fsm.start_Line_Down_Extract_Lty:=(FeatureMem_02_Addr.count>128)
+    Fsm.start_Line_Down_Extract_Lty:=(FeatureMem_02_Addr.count>10)
     Fsm_LineUp.Extract_Lty_End:=FeatureMem_02_Addr.valid//数据发完后就进入idle状态
     Fsm_LineUp.Next_Ready:=io.mData1.ready
     Fsm_LineUp.Line_Down_End:=Bram_Out_Cnt.valid
@@ -330,9 +331,9 @@ class Lty_Feature_Cache extends Component{//连通域标记
         io.Mark2Up_Out:=0//第一行出去的是0//第一行最后会出来一个xx，很奇怪
     }
 
-    io.strat_Sub_Module1:=Fsm_LineUp.currentState===LTY_ENUM_UP.EXTRACT_LTY&&(RegNext(!(Fsm_LineUp.nextState===LTY_ENUM_UP.WAIT_NEXT_READY)))
-    io.strat_Sub_Module2:=Fsm.currentState===LTY_ENUM.EXTRACT_LTY&&(RegNext(!(Fsm.currentState===LTY_ENUM.EXTRACT_LTY)))//在这个状态下就启动连通域提取
-}
+    io.strat_Sub_Module1:=Fsm_LineUp.currentState===LTY_ENUM_UP.WAIT_EXTRACT_LTY&&(!RegNext(Fsm_LineUp.currentState===LTY_ENUM_UP.WAIT_NEXT_READY))
+    io.strat_Sub_Module2:=Fsm.currentState===LTY_ENUM.WAIT_NEXT_READY&&(!RegNext(Fsm.currentState===LTY_ENUM.WAIT_NEXT_READY))//在这个状态下就启动连通域提取
+}//
 object MARK_ENUM extends SpinalEnum(defaultEncoding = binaryOneHot) {
     //启动信号是非常有必要的，比如第一行启动后，需要处理至少5个点后才能启动第二行的处理
     //也就是说，多并行度下，第二行的处理必须慢第一行5个标记点处理的时间
@@ -522,8 +523,8 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
     val Shift_Mark_In=UInt(Config.LTY_MARK_BRAM_WIDTH bits)
     val Shift_Start=Bool()//启动移位寄存器
     val Shift_Start_First=Bool()//控制第一个寄存器的
-    Shift_Start:=(!Fsm.Get_Data_End)&&io.sData.valid
-    Shift_Start_First:=False
+    Shift_Start:=io.sData.valid//(!Fsm.Get_Data_End)&&io.sData.valid
+    Shift_Start_First:=io.sData.valid
     Shift_Mark_In:=0
     when(Shift_Start_First){
         Left_Mark(0):=Shift_Mark_In//代表下一个点对应的左标记
@@ -531,7 +532,7 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         Left_Mark(0):=Left_Mark(0)
     }
     when(Shift_Start){
-        Left_Mark(1):=Left_Mark(0)
+        Left_Mark(1):=Shift_Mark_In
     }otherwise{
         Left_Mark(1):=Left_Mark(1)
     }
@@ -585,12 +586,15 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         io.Mark_Out:=io.Lty_Total_NUm+1//那么这是一个新的连通域、
         io.New_Lty_Gen:=True
         Shift_Mark_In:=io.Lty_Total_NUm+1
-        
-        Shift_Start_First:=True
+
+        Shift_Start_First:=True//生成新的连通域后，下一个点进来时也能得到左边点的标记
+        Left_Mark(1):=io.Lty_Total_NUm+1
     }
     when(Fsm.currentState===MARK_ENUM.UP0_LEFT1) {//上面没被标记，左边被标记了,那么当前点的标记就应该和左边点标记一样
         io.Mark_Out:=RegNext(Left_Mark(1))//将当前点的标记点更新为左标记点
-        Shift_Mark_In:=Left_Mark(1)
+        Shift_Mark_In:=RegNext(Left_Mark(1))
+        Left_Mark(1):=Shift_Mark_In
+        Shift_Start_First:=True//更新左标记
         // Fsm.Gen_New_Lty:=False//进入生成新连通域状态
         // Fsm.Up1_Cond:=False//进入上不为0状态，处理左边四个点
     }
@@ -598,8 +602,9 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         io.Mark_Out:=Shift_Mark_In
         io.Mark_Out_Addr:=Pixel_In_Cnt.count-1
         Shift_Mark_In:=RegNext(io.Up_mark)//Shift_Mark_In是一个wire类型    
-        Shift_Start:=False        
-    
+        // Left_Mark(1):=io.Lty_Total_NUm       //不能移位，只能修改
+        //进入上不为0条件判断，这时坐标记还是当前点的坐标记，4个坐标几寄存器不能移位
+        Shift_Start_First:=True
     
     }        
 //生成新连通域(上，左都为0)==============================================================================
@@ -627,7 +632,7 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
     when(Fsm.currentState===MARK_ENUM.UP1_COND){
         //位于上不为0状态，先处理当前点
         io.Mark_Out_Valid:=True//需要向当前点对应的mem地址写入mark标记0
-        Shift_Start:=False
+
     }
     //io.Lty_Para_mValid:=Delay(Fsm.currentState===MARK_ENUM.UP1_COND,Config.DSP_PIPELINE_STAGE)&&Fsm.currentState===MARK_ENUM.UP1_COND
 //===========================左边四个点处理=====================================
@@ -636,9 +641,9 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
     Fsm.UpData_Left2_End:=io.Lty_Para_mReady&&io.Lty_Para_mValid//数据发完就结束
     when(Fsm.currentState===MARK_ENUM.UPDATA_LEFT1){//更新左边四个点
         Shift_Start:=False
-        Shift_Start_First:=False       
+        Left_Mark(1):=Left_Mark(0)//不论满不满足下面的条件，Left_Mark(1)都要被更新，留给下一个点用
         when(Left_Mark(1)=/=0&&Left_Mark(1)=/=Left_Mark(0)){
-            Left_Mark(1):=Left_Mark(0)
+            
             io.Mark_Out:=Left_Mark(0)
             io.Mark_Out_Valid:=True//将当前点标记更新为上标记
             io.Mark_Out_Addr:=Pixel_In_Cnt.count-2
@@ -648,7 +653,7 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
     Fsm.UpData_Left3_End:=io.Lty_Para_mReady&&io.Lty_Para_mValid//数据发完就结束
     when(Fsm.currentState===MARK_ENUM.UPDATA_LEFT2){//更新左边四个点
         Shift_Start:=False 
-        Shift_Start_First:=False              
+          
         when(Left_Mark(2)=/=0&&Left_Mark(2)=/=Left_Mark(0)){
             Left_Mark(2):=Left_Mark(0)
             io.Mark_Out:=Left_Mark(0)
@@ -659,7 +664,7 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
     Fsm.UpData_Left4_End:=io.Lty_Para_mReady&&io.Lty_Para_mValid//数据发完就结束
     when(Fsm.currentState===MARK_ENUM.UPDATA_LEFT3){//更新左边四个点
         Shift_Start:=False
-        Shift_Start_First:=False               
+     
         when(Left_Mark(3)=/=0&&Left_Mark(3)=/=Left_Mark(0)){
             Left_Mark(3):=Left_Mark(0)
             io.Mark_Out:=Left_Mark(0)
@@ -669,7 +674,7 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
     }
     when(Fsm.currentState===MARK_ENUM.UPDATA_LEFT4){//更新左边四个点
         Shift_Start:=False   
-        Shift_Start_First:=False    
+
         when(Left_Mark(4)=/=0&&Left_Mark(4)=/=Left_Mark(0)){
             Left_Mark(4):=Left_Mark(0)
             io.Mark_Out:=Left_Mark(0)
@@ -705,14 +710,15 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
     Lty_Cache_Module.io.sData<>io.sData
     Lty_Cache_Module.io.start<>io.start
     val Total_Num_Reg=Reg(UInt(log2Up(Config.LTY_PARAM_MEM_DEPTH) bits))init(0)//创建连通域计数器
-    when(io.start&&RegNext(!io.start)){
+    val Start_Once=io.start&&(!RegNext(io.start))
+    when(Start_Once){
         Total_Num_Reg:=0
     }
     // otherwise{
     //     Total_Num_Reg:=Total_Num_Reg
     // }
     //Line up=======================================================
-    Lty_Mark_Up.io.start:=Lty_Cache_Module.io.strat_Sub_Module1||io.start
+    Lty_Mark_Up.io.start:=Lty_Cache_Module.io.strat_Sub_Module1||Start_Once
     Lty_Mark_Up.io.sData<>Lty_Cache_Module.io.mData1
     Lty_Mark_Up.io.Lty_Total_NUm:=Total_Num_Reg
 
@@ -728,7 +734,7 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
     Lty_Mark_Up.io.sData_Receive_End<>Lty_Cache_Module.io.mData1_End_Receive
     Lty_Mark_Up.io.Lty_Para_mReady:=True//待修改
     //Line Down=====================================================
-    Lty_Mark_Down.io.start:=Lty_Cache_Module.io.strat_Sub_Module2||io.start
+    Lty_Mark_Down.io.start:=Lty_Cache_Module.io.strat_Sub_Module2||Start_Once
     Lty_Mark_Down.io.sData<>Lty_Cache_Module.io.mData2
     Lty_Mark_Down.io.Lty_Total_NUm:=Total_Num_Reg
 

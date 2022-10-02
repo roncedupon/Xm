@@ -512,7 +512,7 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
     val Pixel_In_Cnt=WaCounter(io.sData.valid,log2Up(Config.LTY_DATA_BRAM_B_DEPTH),Config.LTY_DATA_BRAM_B_DEPTH-1)//当前处理的点的坐标计数器
     //不等valid的原因：只有ready拉高valid才会拉高
 
-    io.Mark_Out_Addr:=RegNext(Pixel_In_Cnt.count)//本来是第0个点，但是拿到一个有效点后，count变成了1、但是需要关心的是0的地址，所以要减去一
+    io.Mark_Out_Addr:=Pixel_In_Cnt.count//本来是第0个点，但是拿到一个有效点后，count变成了1、但是需要关心的是0的地址，所以要减去一
 //regNext的原因：Pixel_in_cnt代表当前处理的点的坐标
 //进入标记状态会慢一拍，所以要regnext一下
     Fsm.Row_End:=Pixel_In_Cnt.valid
@@ -523,7 +523,8 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
     val Shift_Mark_In=UInt(Config.LTY_MARK_BRAM_WIDTH bits)
     val Shift_Start=Bool()//启动移位寄存器
     val Shift_Start_First=Bool()//控制第一个寄存器的
-    Shift_Start:=io.sData.valid//(!Fsm.Get_Data_End)&&io.sData.valid
+    Shift_Start:=io.sData.valid//只要进来的数据有效，那么这个点被处理了
+    io.Mark_Out_Valid:=io.sData.valid//当前数据有效，下一周期出去当前数据的位置
     Shift_Start_First:=io.sData.valid
     Shift_Mark_In:=0
     when(Shift_Start_First){
@@ -568,74 +569,80 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         Fsm.Gen_New_Lty:=True
         Fsm.Up0_Left1:=False
         Fsm.Up1_Cond:=False
+        when(Fsm.Get_Data_End){
+            io.Mark_Out:=io.Lty_Total_NUm+1//那么这是一个新的连通域、
+            Shift_Mark_In:=io.Lty_Total_NUm+1
+        }
+
     }elsewhen(io.Up_mark =/= 0){//只要上不为0就直接启动左四个点的判断了
         Fsm.Gen_New_Lty:=False
         Fsm.Up0_Left1:=False
         Fsm.Up1_Cond:=True
-        Shift_Start:=False
-        Shift_Start_First:=False
+        Shift_Start:=False//左边的几个点先不用移
+
+
+        when(Fsm.Get_Data_End){
+            io.Mark_Out:=io.Up_mark//将当前处理的点归于上一行点所在连通域中
+            Shift_Mark_In:=io.Up_mark
+        }
     }elsewhen(io.Up_mark === 0 && Left_Mark(1) =/= 0){
         Fsm.Gen_New_Lty:=False
         Fsm.Up0_Left1:=True
         Fsm.Up1_Cond:=False
+        when(Fsm.Get_Data_End){
+            io.Mark_Out:=Left_Mark(1)//将当前连通域归于左边那个点所在的连通域
+            Shift_Mark_In:=Left_Mark(1)
+        }
     }otherwise{
         Fsm.Gen_New_Lty:=False
         Fsm.Up0_Left1:=False
         Fsm.Up1_Cond:=False
     }
-    io.New_Lty_Gen:=False
-    when(Fsm.currentState===MARK_ENUM.GEN_NEW_LTY) {//上面和左边都没被标记
-        io.Mark_Out:=io.Lty_Total_NUm+1//那么这是一个新的连通域、
-        io.New_Lty_Gen:=True
-        Shift_Mark_In:=io.Lty_Total_NUm+1
 
-        Shift_Start_First:=True//生成新的连通域后，下一个点进来时也能得到左边点的标记
-        Left_Mark(1):=io.Lty_Total_NUm+1
+    io.New_Lty_Gen:=Fsm.currentState===MARK_ENUM.GEN_NEW_LTY&&(!RegNext(Fsm.currentState===MARK_ENUM.GEN_NEW_LTY))
+    when(Fsm.currentState===MARK_ENUM.GEN_NEW_LTY) {//上面和左边都没被标记
+
+
+        
+
     }
     when(Fsm.currentState===MARK_ENUM.UP0_LEFT1) {//上面没被标记，左边被标记了,那么当前点的标记就应该和左边点标记一样
-        io.Mark_Out:=RegNext(Left_Mark(1))//将当前点的标记点更新为左标记点
-        Shift_Mark_In:=RegNext(Left_Mark(1))
-        Left_Mark(1):=Shift_Mark_In
-        Shift_Start_First:=True//更新左标记
-        // Fsm.Gen_New_Lty:=False//进入生成新连通域状态
-        // Fsm.Up1_Cond:=False//进入上不为0状态，处理左边四个点
+        
+        
+        
+
     }
     when(Fsm.currentState===MARK_ENUM.UP1_COND) {//上面点被标记，左边点没被标记，将当前点标记为上面的点
-        io.Mark_Out:=Shift_Mark_In
-        io.Mark_Out_Addr:=Pixel_In_Cnt.count-1
-        Shift_Mark_In:=RegNext(io.Up_mark)//Shift_Mark_In是一个wire类型    
-        // Left_Mark(1):=io.Lty_Total_NUm       //不能移位，只能修改
-        //进入上不为0条件判断，这时坐标记还是当前点的坐标记，4个坐标几寄存器不能移位
-        Shift_Start_First:=True
+        
     
     }        
 //生成新连通域(上，左都为0)==============================================================================
-    io.Mark_Out_Valid:=(!(Fsm.currentState===MARK_ENUM.IDLE||Fsm.currentState===MARK_ENUM.INIT))//从False改为一直True的原因：如果不满足三个条件，它也应该有效，只不过它的值是0
+    //io.Mark_Out_Valid:=(!(Fsm.currentState===MARK_ENUM.IDLE||Fsm.currentState===MARK_ENUM.INIT))//从False改为一直True的原因：如果不满足三个条件，它也应该有效，只不过它的值是0
     io.Lty_Para_mValid:=True
     Fsm.Gen_New_Lty_End:=io.Lty_Para_mReady&&io.Lty_Para_mValid//修改原因：需要数据发过去才能退出这个状态Delay(Fsm.currentState===MARK_ENUM.GEN_NEW_LTY,Config.DSP_PIPELINE_STAGE)//控制状态结束
-    when(Fsm.currentState===MARK_ENUM.GEN_NEW_LTY){//这部分代码主要处理状态结束
-        //首先得进入生成新连通域状态
-        //在这一状态下，标记相关操作
-        //向当前Pixel_Cnt-1对应的mark Mem写入Lty_Num+1  只操作独立的mem，无写冲突
-        io.Mark_Out_Valid:=True
-        //更新移位寄存器的值供下一轮使用
-    }
+    // when(Fsm.currentState===MARK_ENUM.GEN_NEW_LTY){//这部分代码主要处理状态结束
+    //     //首先得进入生成新连通域状态
+    //     //在这一状态下，标记相关操作
+    //     //向当前Pixel_Cnt-1对应的mark Mem写入Lty_Num+1  只操作独立的mem，无写冲突
+    //     io.Mark_Out_Valid:=True
+    //     //更新移位寄存器的值供下一轮使用
+    // }
 
     //io.Lty_Para_mValid:=Delay(Fsm.currentState===MARK_ENUM.GEN_NEW_LTY,Config.DSP_PIPELINE_STAGE)&&Fsm.currentState===MARK_ENUM.GEN_NEW_LTY
 //上为0，左不为0
     Fsm.Up0_Left1_End:=io.Lty_Para_mReady&&io.Lty_Para_mValid
-    when(Fsm.currentState===MARK_ENUM.UP0_LEFT1){
-        io.Mark_Out_Valid:=True
-    }
+    // when(Fsm.currentState===MARK_ENUM.UP0_LEFT1){
+    //     io.Mark_Out_Valid:=True
+    // }
     //io.Lty_Para_mValid:=Delay(Fsm.currentState===MARK_ENUM.UP0_LEFT1,Config.DSP_PIPELINE_STAGE)&&Fsm.currentState===MARK_ENUM.UP0_LEFT1
 //上不为0，还要处理左四个点
     Fsm.Up1_Cond_End:=io.Lty_Para_mReady&&io.Lty_Para_mValid
         //同样地，只有当数据算出来的数据发过去后才能退出这个状态去干其他的事情
-    when(Fsm.currentState===MARK_ENUM.UP1_COND){
-        //位于上不为0状态，先处理当前点
-        io.Mark_Out_Valid:=True//需要向当前点对应的mem地址写入mark标记0
+    // when(Fsm.currentState===MARK_ENUM.UP1_COND){
+    //     //位于上不为0状态，先处理当前点
+    //     io.Mark_Out_Valid:=True//需要向当前点对应的mem地址写入mark标记0
 
-    }
+    // }
     //io.Lty_Para_mValid:=Delay(Fsm.currentState===MARK_ENUM.UP1_COND,Config.DSP_PIPELINE_STAGE)&&Fsm.currentState===MARK_ENUM.UP1_COND
 //===========================左边四个点处理=====================================
     Fsm.UpData_Left1_End:=io.Lty_Para_mReady&&io.Lty_Para_mValid//数据发完就结束
@@ -647,7 +654,6 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         when(Left_Mark(1)=/=0&&Left_Mark(1)=/=Left_Mark(0)){
             
             io.Mark_Out:=Left_Mark(0)
-            io.Mark_Out_Valid:=True//将当前点标记更新为上标记
             io.Mark_Out_Addr:=Pixel_In_Cnt.count-2
         }
 
@@ -659,7 +665,7 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         when(Left_Mark(2)=/=0&&Left_Mark(2)=/=Left_Mark(0)){
             Left_Mark(2):=Left_Mark(0)
             io.Mark_Out:=Left_Mark(0)
-            io.Mark_Out_Valid:=True//将当前点标记更新为上标记
+
             io.Mark_Out_Addr:=Pixel_In_Cnt.count-3
         }
     }
@@ -670,7 +676,7 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         when(Left_Mark(3)=/=0&&Left_Mark(3)=/=Left_Mark(0)){
             Left_Mark(3):=Left_Mark(0)
             io.Mark_Out:=Left_Mark(0)
-            io.Mark_Out_Valid:=True//将当前点标记更新为上标记
+
             io.Mark_Out_Addr:=Pixel_In_Cnt.count-4
         }
     }
@@ -680,14 +686,14 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         when(Left_Mark(4)=/=0&&Left_Mark(4)=/=Left_Mark(0)){
             Left_Mark(4):=Left_Mark(0)
             io.Mark_Out:=Left_Mark(0)
-            io.Mark_Out_Valid:=True//将当前点标记更新为上标记
+
             io.Mark_Out_Addr:=Pixel_In_Cnt.count-5
         }
     }
 //输出的要更新的标记点握手信号处理============================================================
-    when(Fsm.currentState===MARK_ENUM.GEN_NEW_LTY||Fsm.currentState===MARK_ENUM.UP0_LEFT1||Fsm.currentState===MARK_ENUM.UP1_COND){
-        io.Mark_Out_Valid:=True
-    }
+    // when(Fsm.currentState===MARK_ENUM.GEN_NEW_LTY||Fsm.currentState===MARK_ENUM.UP0_LEFT1||Fsm.currentState===MARK_ENUM.UP1_COND){
+    //     io.Mark_Out_Valid:=True
+    // }
     
     // io.J_Out:=Pixel_In_Cnt.count-1//列标
 //sData握手信号控制
@@ -748,7 +754,9 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
     Lty_Mark_Down.io.Sign_Flag<>io.Sign_Flag
     Lty_Mark_Down.io.Temp_Back_Mean<>io.Temp_Back_Mean
     Lty_Mark_Down.io.Temp_Back_Thrd<>io.Temp_Back_Thrd    
-    Lty_Mark_Down.io.Lty_Para_mReady:=True//待修改
+    val Test_cnt=WaCounter(True,5,31)
+    
+    Lty_Mark_Down.io.Lty_Para_mReady:=Test_cnt.count>16//True//待修改
 
 
 

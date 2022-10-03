@@ -189,7 +189,10 @@ class Lty_Feature_Cache extends Component{//连通域标记
         val strat_Sub_Module1=out Bool()//启动下层的连通域标记子模块
         val strat_Sub_Module2=out Bool()//启动下层的连通域标记子模块
 
-        
+        val Mul_I_Up=out UInt(11 bits)
+        val Mul_I_Down=out UInt(11 bits)
+        val Mul_J_Up=out UInt(11 bits)
+        val Mul_J_Down=out UInt(11 bits)
 
     }
     noIoPrefix()
@@ -210,6 +213,7 @@ class Lty_Feature_Cache extends Component{//连通域标记
 
     //解决：22、9、21/19:19---由于下层是通过ready信号向上层请求数据的，所以下层的列计数器也应该是
     val Bram_Out_Row_Cnt=WaCounter(Bram_Out_Cnt.valid, log2Up(Config.LTY_ROW_NUM/2),Config.LTY_ROW_NUM/2-1)//创建输出行数计数器,记得除2，因为并行度是2
+
     val INIT_CNT=WaCounter(Fsm.currentState === LTY_ENUM.INIT, 3, 5)//初始化计数器,数五拍
     val Row_Cnt_All=WaCounter(Col_Cnt.valid,log2Up(Config.LTY_ROW_NUM),Config.LTY_ROW_NUM-1)//输入行计数器
     val Row_Cnt_2=WaCounter(Col_Cnt.valid,2,2)//缓存两行计数器，它的值一直是0，1，2，不可能是3，因为当Row_Cnt_2===2时，sReady拉低，不会再进数据
@@ -227,6 +231,12 @@ class Lty_Feature_Cache extends Component{//连通域标记
     val Fsm_LineUp=LTY_UP_FSM(Row_Cnt_All.count>1)//缓存完开头两行，就启动上一行的连通域提取
     
     val FeatureMem_02_Addr=WaCounter(io.mData1.ready&&Fsm_LineUp.currentState===LTY_ENUM_UP.EXTRACT_LTY,log2Up(Config.LTY_DATA_BRAM_B_DEPTH), Config.LTY_DATA_BRAM_B_DEPTH-1)
+    
+    io.Mul_I_Up:=((Bram_Out_Row_Cnt.count+1)<<1)+3
+    io.Mul_I_Down:=((Bram_Out_Row_Cnt.count+1)<<1)+4
+    io.Mul_J_Up:=FeatureMem_02_Addr.count+5
+    io.Mul_J_Down:=FeatureMem_13_Addr.count+5
+
     Fsm.Load_2_Row_End:=Row_Cnt_All.count>1//开头两行被缓存完了，行计数器为2的时候那么就加载完两行了,不能大于等于一，因为加载完第0行后，Row_Cnt就已经是1了
     Fsm.Next_Ready:=io.mData2.ready
     Fsm.start_Line_Down_Extract_Lty:=(FeatureMem_02_Addr.count>10)
@@ -502,6 +512,9 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         // val Lty_Para4_mData=out UInt(Config.LTY_PARAM4_MEM_WIDTH bits)
         // val Lty_Para5_mData=out UInt(Config.LTY_PARAM5_MEM_WIDTH bits)//其实6和5一样，不知道还要不要再多开一个。。。
         // val Lty_Para6_mData=out UInt(Config.LTY_PARAM6_MEM_WIDTH bits)---注掉的原因：Dsp可以计算A*B+C,还是单独拿一个模块来处理累加计算好了
+
+//================================================================================
+
     }
     io.Mark_Out:=0
     io.Lty_Para_mValid:=False
@@ -753,7 +766,8 @@ class Compute_Sub_Module(Left_Shift:Int,Pixel_In_Width:Int,Mul_Out_Width:Int) ex
 
     }
     noIoPrefix()
-    val Multiply_Data_In=io.Sign_Flag?((io.Pixel_In<<Left_Shift)-io.Temp_Back_Mean)|((io.Pixel_In<<Left_Shift)+io.Temp_Back_Mean)//Multiply_Data_In--16 bit;根据数据分布，似乎不会有溢出的可能
+    val Multiply_Data_In=io.Sign_Flag?((io.Pixel_In<<Left_Shift)+io.Temp_Back_Mean)|((io.Pixel_In<<Left_Shift)-io.Temp_Back_Mean)//Multiply_Data_In--16 bit;根据数据分布，似乎不会有溢出的可能
+    //有符号是加，无符号是减
     val Pow_Multiper=new Lty_Pow(Pixel_In_Width+Left_Shift,Pixel_In_Width+Left_Shift,52)//平方乘法器
     Pow_Multiper.io.A:=Multiply_Data_In
     Pow_Multiper.io.B:=Multiply_Data_In
@@ -782,8 +796,7 @@ class Compute_Sub_Module(Left_Shift:Int,Pixel_In_Width:Int,Mul_Out_Width:Int) ex
 
 
 }
-
-
+class Lty_StreamFifo extends StreamFifo(UInt(64 bits),16)
 class Feature_Mark extends Component{//整合图片缓存模块和标记模块
     val Lty_Cache_Module=new Lty_Feature_Cache
     val Lty_Mark_Up=new Lty_Mark_Sub_Module
@@ -874,8 +887,8 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
     Compute_Module_Up.io.Sign_Flag:=io.Sign_Flag
     Compute_Module_Up.io.Temp_Back_Mean:=io.Temp_Back_Mean
     Compute_Module_Up.io.Read_Addr:=Lty_Mark_Up.io.Mark_Out_Addr
-    Compute_Module_Up.io.Mul_I_In:=1
-    Compute_Module_Up.io.Mul_J_In:=1
+    Compute_Module_Up.io.Mul_I_In:=Lty_Cache_Module.io.Mul_I_Up
+    Compute_Module_Up.io.Mul_J_In:=Lty_Cache_Module.io.Mul_J_Up
     //------------------------------------------
     val Compute_Module_Down=new Compute_Sub_Module(10,16,64)
     val Compute_Data_In_Down=UInt(16 bits)
@@ -886,24 +899,33 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
     Compute_Module_Down.io.Sign_Flag:=io.Sign_Flag
     Compute_Module_Down.io.Temp_Back_Mean:=io.Temp_Back_Mean
     Compute_Module_Down.io.Read_Addr:=Lty_Mark_Down.io.Mark_Out_Addr
-    Compute_Module_Down.io.Mul_I_In:=1
-    Compute_Module_Down.io.Mul_J_In:=1
+    Compute_Module_Down.io.Mul_I_In:=Lty_Cache_Module.io.Mul_I_Down
+    Compute_Module_Down.io.Mul_J_In:=Lty_Cache_Module.io.Mul_J_Down
 
 
     //连接计算模块的fifo
     //val Para1_Fifo=new StreamFifo(Bool(),16)//-----第一个参数似乎不需要单独fifo处理
-    val Para2_Fifo=new StreamFifo(UInt(64 bits),16)
+    val Para2_Fifo=new Lty_StreamFifo
+    
     // val Para3_Fifo=new StreamFifo(UInt(64 bits),16)
     // val Para4_Fifo=new StreamFifo(UInt(64 bits),16)
     // val Para5_Fifo=new StreamFifo(UInt(64 bits),16)
     
     //上下同时写fifo产生冲突，处理策略如下：
         //如果上下同时写入fifo，那么先写入上一行的，再写入下一行的，同时在写入上一行的时候，拉低下一行的mready，确保上一行写fifo的时候，下一行不会继续提取连通域防止数据丢失
-    Para2_Fifo.io.push.valid:=Lty_Mark_Up.io.Lty_Para_mValid?Lty_Mark_Up.io.Lty_Para_mValid|Lty_Mark_Down.io.Lty_Para_mValid
+    val Fifo_Push_Valid=Lty_Mark_Up.io.Lty_Para_mValid?Lty_Mark_Up.io.Lty_Para_mValid|Lty_Mark_Down.io.Lty_Para_mValid
+    Para2_Fifo.io.push.valid:=Delay(Fifo_Push_Valid,16)
     Lty_Mark_Down.io.Lty_Para_mReady:=Lty_Mark_Up.io.Lty_Para_mValid?False|Para2_Fifo.io.push.ready
     
     Para2_Fifo.io.push.ready<>Lty_Mark_Up.io.Lty_Para_mReady
-    Para2_Fifo.io.push.payload:=Compute_Module_Up.io.Para_2_Out
+    Para2_Fifo.io.push.payload:=Delay(Lty_Mark_Up.io.Lty_Para_mValid,16)?Compute_Module_Up.io.Para_2_Out|Compute_Module_Down.io.Para_2_Out
+    //对于进fifo的数据，有两条数据源：第一行的数据和第二行的数据
+        /*
+            如果11 拍前上下同时要向fifo中写入数据，经过乘法器后11拍拿到计算结果，这个结果需要向fifo中写入
+            但是需要优先写入第一行的计算结果
+        
+        
+        */
     Para2_Fifo.io.pop.ready:=True//待处理
 
 

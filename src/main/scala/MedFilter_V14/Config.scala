@@ -39,7 +39,8 @@ case class MemConfig(){
     val LTY_DATA_BRAM_A_DEPTH=510 //滤波后图片数据A口的缓存深度---这里得是510而不是512
     val LTY_DATA_BRAM_B_DEPTH=2040//滤波后图片数据B口的缓存深度
         //乘法器相关
-    val DSP_PIPELINE_STAGE=5//乘法器流水线
+    val LTY_POW_DELAY=6//
+    val LTY_MULij_DELAY=5//
     val SHIFT_LEFT=10//左移10位tempBackMeam的相对误差是0.4%，应该能用
         //连通域计算后的6参数存储,不用BRAM了，直接使用spinal的mem
     val LTY_PARAM_MEM_DEPTH=512//2^LTY_DATA_BRAM_A_DEPTH,记得修改

@@ -806,10 +806,10 @@ class Lty_StreamFifo extends BlackBox{
         val empty=out Bool()
         val dout=out UInt(64 bits)
         val rd_en=in Bool() 
-        val srst=in Bool()
+
     }
     noIoPrefix()
-    mapClockDomain(clock=io.clk,reset = io.srst)
+    mapClockDomain(clock=io.clk)//,reset = io.srst,resetActiveLevel = LOW)
     
 }
 class Feature_Mark extends Component{//整合图片缓存模块和标记模块
@@ -928,12 +928,17 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
     
     //上下同时写fifo产生冲突，处理策略如下：
         //如果上下同时写入fifo，那么先写入上一行的，再写入下一行的，同时在写入上一行的时候，拉低下一行的mready，确保上一行写fifo的时候，下一行不会继续提取连通域防止数据丢失
+        //Para_Valid无需单独处理，因为处于有效状态内Para_valid会一直拉高
+
     val Fifo_Push_Valid=Lty_Mark_Up.io.Lty_Para_mValid?Lty_Mark_Up.io.Lty_Para_mValid|Lty_Mark_Down.io.Lty_Para_mValid
-    Para2_Fifo.io.wr_en:=Fifo_Push_Valid
+    val Fifo_Push_Valid_Delayed=Delay(Fifo_Push_Valid,11)//这里延迟11拍（6+5）就不行
+    Para2_Fifo.io.wr_en:=RegNext(Fifo_Push_Valid_Delayed)
+
     Lty_Mark_Down.io.Lty_Para_mReady:=Lty_Mark_Up.io.Lty_Para_mValid?False|(!Para2_Fifo.io.full)
-    
     Lty_Mark_Up.io.Lty_Para_mReady:=(!Para2_Fifo.io.full)//只要没满就能一直写
-    Para2_Fifo.io.din:=Delay(Lty_Mark_Up.io.Lty_Para_mValid,16)?Compute_Module_Up.io.Para_2_Out|Compute_Module_Down.io.Para_2_Out
+
+
+    Para2_Fifo.io.din:=Delay(Lty_Mark_Up.io.Lty_Para_mValid,11)?Compute_Module_Up.io.Para_2_Out|Compute_Module_Down.io.Para_2_Out
     //对于进fifo的数据，有两条数据源：第一行的数据和第二行的数据
         /*
             如果11 拍前上下同时要向fifo中写入数据，经过乘法器后11拍拿到计算结果，这个结果需要向fifo中写入
@@ -941,13 +946,14 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
         
         
         */
-    Para2_Fifo.io.rd_en:=True//待处理
-
-
 
     
-
-
+    when(Para2_Fifo.io.full){
+        Para2_Fifo.io.rd_en:=True
+    }otherwise{
+        Para2_Fifo.io.rd_en:=RegNext(Para2_Fifo.io.rd_en)
+    }
+    
 
 }
 

@@ -774,19 +774,19 @@ class Compute_Sub_Module(Left_Shift:Int,Pixel_In_Width:Int,Mul_Out_Width:Int) ex
 
     //新建连通域直接写入乘法结果,其他情况则需写入累加和
 
-    val IJ_Mul_Aport_IN=Delay(Pow_Multiper.io.P,Config.LTY_POW_DELAY)//I,J乘法器A口输入
+    
     //行
     val Mul_I=new Lty_Mul(52,11,64)//2048--11bit
-    Mul_I.io.A:=IJ_Mul_Aport_IN
-    Mul_I.io.B:=Delay(io.Mul_I_In,Config.LTY_POW_DELAY+Config.LTY_MULij_DELAY)
+    Mul_I.io.A:=Pow_Multiper.io.P//Delay(,Config.LTY_POW_DELAY+Config.LTY_MULij_DELAY)
+    Mul_I.io.B:=Delay(io.Mul_I_In,Config.LTY_POW_DELAY)//I,J行列标识
     io.Para_2_Out:=Mul_I.io.P
     //列
     val Mul_J=new Lty_Mul(52,11,64)//2048--11bit
-    Mul_J.io.A:=IJ_Mul_Aport_IN
-    Mul_J.io.B:=Delay(io.Mul_J_In,Config.LTY_POW_DELAY+Config.LTY_MULij_DELAY)
+    Mul_J.io.A:=Pow_Multiper.io.P
+    Mul_J.io.B:=Delay(io.Mul_I_In,Config.LTY_POW_DELAY)//I,J行列标识
     io.Para_3_Out:=Mul_J.io.P
 
-    io.Para_4_Out:=IJ_Mul_Aport_IN.resize(64)
+    io.Para_4_Out:=0
     io.Para_5_Out:=Delay(Multiply_Data_In,Config.LTY_POW_DELAY+Config.LTY_MULij_DELAY).resize(64)
 
 
@@ -796,7 +796,22 @@ class Compute_Sub_Module(Left_Shift:Int,Pixel_In_Width:Int,Mul_Out_Width:Int) ex
 
 
 }
-class Lty_StreamFifo extends StreamFifo(UInt(64 bits),16)
+class Lty_StreamFifo extends BlackBox{
+    val io=new Bundle{//component要求out有驱动，但是black box不要求out的驱动
+        val clk=in Bool()
+        val din=in UInt(64 bits)
+        val full=out Bool()
+        val wr_en=in Bool()
+
+        val empty=out Bool()
+        val dout=out UInt(64 bits)
+        val rd_en=in Bool() 
+        val srst=in Bool()
+    }
+    noIoPrefix()
+    mapClockDomain(clock=io.clk,reset = io.srst)
+    
+}
 class Feature_Mark extends Component{//整合图片缓存模块和标记模块
     val Lty_Cache_Module=new Lty_Feature_Cache
     val Lty_Mark_Up=new Lty_Mark_Sub_Module
@@ -914,11 +929,11 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
     //上下同时写fifo产生冲突，处理策略如下：
         //如果上下同时写入fifo，那么先写入上一行的，再写入下一行的，同时在写入上一行的时候，拉低下一行的mready，确保上一行写fifo的时候，下一行不会继续提取连通域防止数据丢失
     val Fifo_Push_Valid=Lty_Mark_Up.io.Lty_Para_mValid?Lty_Mark_Up.io.Lty_Para_mValid|Lty_Mark_Down.io.Lty_Para_mValid
-    Para2_Fifo.io.push.valid:=Delay(Fifo_Push_Valid,16)
-    Lty_Mark_Down.io.Lty_Para_mReady:=Lty_Mark_Up.io.Lty_Para_mValid?False|Para2_Fifo.io.push.ready
+    Para2_Fifo.io.wr_en:=Fifo_Push_Valid
+    Lty_Mark_Down.io.Lty_Para_mReady:=Lty_Mark_Up.io.Lty_Para_mValid?False|(!Para2_Fifo.io.full)
     
-    Para2_Fifo.io.push.ready<>Lty_Mark_Up.io.Lty_Para_mReady
-    Para2_Fifo.io.push.payload:=Delay(Lty_Mark_Up.io.Lty_Para_mValid,16)?Compute_Module_Up.io.Para_2_Out|Compute_Module_Down.io.Para_2_Out
+    Lty_Mark_Up.io.Lty_Para_mReady:=(!Para2_Fifo.io.full)//只要没满就能一直写
+    Para2_Fifo.io.din:=Delay(Lty_Mark_Up.io.Lty_Para_mValid,16)?Compute_Module_Up.io.Para_2_Out|Compute_Module_Down.io.Para_2_Out
     //对于进fifo的数据，有两条数据源：第一行的数据和第二行的数据
         /*
             如果11 拍前上下同时要向fifo中写入数据，经过乘法器后11拍拿到计算结果，这个结果需要向fifo中写入
@@ -926,7 +941,7 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
         
         
         */
-    Para2_Fifo.io.pop.ready:=True//待处理
+    Para2_Fifo.io.rd_en:=True//待处理
 
 
 

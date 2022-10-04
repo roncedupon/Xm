@@ -752,11 +752,12 @@ class Compute_Sub_Module(Left_Shift:Int,Pixel_In_Width:Int,Mul_Out_Width:Int) ex
         val Mul_J_In=in UInt(11 bits)//2048---11bit
         
 
-        val Read_Addr=in UInt(log2Up(Config.LTY_MARK_BRAM_DEPTH) bits)
+        // val Read_Addr=in UInt(log2Up(Config.LTY_MARK_BRAM_DEPTH) bits)
         
 
 
         // val Para_1_Out=out Bool()//--LtyData(ImgMark(i,j),1) = LtyData(ImgMark(i,j),1) + 1 ;% size
+        // val RW_Addr=out UInt(log2Up(Config.LTY_MARK_BRAM_DEPTH) bits)
         val Para_2_Out=out UInt(64 bits)//16->26->52->64--LtyData(ImgMark(i,j),2) = LtyData(ImgMark(i,j),2) + double(ImgFilter(i,j)-temp_back_mean)^2*(i) ;% FZX
         val Para_3_Out=out UInt(64 bits)//16->26->52->64--LtyData(ImgMark(i,j),2) = LtyData(ImgMark(i,j),2) + double(ImgFilter(i,j)-temp_back_mean)^2*(j) ;
         val Para_4_Out=out UInt(64 bits)//52->64---LtyData(ImgMark(i,j),4) = LtyData(ImgMark(i,j),4) + double(ImgFilter(i,j)-temp_back_mean)^2 ;% FM
@@ -789,7 +790,7 @@ class Compute_Sub_Module(Left_Shift:Int,Pixel_In_Width:Int,Mul_Out_Width:Int) ex
     io.Para_4_Out:=IJ_Mul_Aport_IN.resize(64)
     io.Para_5_Out:=Delay(Multiply_Data_In,Config.LTY_POW_DELAY+Config.LTY_MULij_DELAY).resize(64)
 
-
+    // io.RW_Addr:=Delay(io.Read_Addr,Config.LTY_POW_DELAY+Config.LTY_MULij_DELAY)
 
 
     //sData控制=====================================================================================================
@@ -797,6 +798,7 @@ class Compute_Sub_Module(Left_Shift:Int,Pixel_In_Width:Int,Mul_Out_Width:Int) ex
 
 }
 class Lty_StreamFifo extends StreamFifo(UInt(64 bits),16)
+class Lty_AddrFifo extends StreamFifo(UInt(11 bits),16)
 class Feature_Mark extends Component{//整合图片缓存模块和标记模块
     val Lty_Cache_Module=new Lty_Feature_Cache
     val Lty_Mark_Up=new Lty_Mark_Sub_Module
@@ -883,10 +885,12 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
     Compute_Data_In_Up:=Lty_Cache_Module.io.mData1.valid?Lty_Cache_Module.io.mData1.payload|RegNext(Compute_Data_In_Up)
     Compute_Module_Up.io.Pixel_In:=Compute_Data_In_Up
 
+    val RW_Addr_Up=UInt(log2Up(Config.LTY_MARK_BRAM_DEPTH) bits)
+    RW_Addr_Up:=Lty_Mark_Up.io.Mark_Out_Valid?Lty_Mark_Up.io.Mark_Out|RegNext(RW_Addr_Up)
 
     Compute_Module_Up.io.Sign_Flag:=io.Sign_Flag
     Compute_Module_Up.io.Temp_Back_Mean:=io.Temp_Back_Mean
-    Compute_Module_Up.io.Read_Addr:=Lty_Mark_Up.io.Mark_Out_Addr
+    // Compute_Module_Up.io.Read_Addr:=Lty_Mark_Up.io.Mark_Out_Addr
     Compute_Module_Up.io.Mul_I_In:=Lty_Cache_Module.io.Mul_I_Up
     Compute_Module_Up.io.Mul_J_In:=Lty_Cache_Module.io.Mul_J_Up
     //------------------------------------------
@@ -895,18 +899,23 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
     Compute_Data_In_Down:=Lty_Cache_Module.io.mData2.valid?Lty_Cache_Module.io.mData2.payload|RegNext(Compute_Data_In_Down)
     Compute_Module_Down.io.Pixel_In:=Compute_Data_In_Down
 
+    val RW_Addr_Down=UInt(log2Up(Config.LTY_MARK_BRAM_DEPTH) bits)
+    RW_Addr_Down:=Lty_Mark_Up.io.Mark_Out_Valid?Lty_Mark_Down.io.Mark_Out|RegNext(RW_Addr_Down)
 
     Compute_Module_Down.io.Sign_Flag:=io.Sign_Flag
     Compute_Module_Down.io.Temp_Back_Mean:=io.Temp_Back_Mean
-    Compute_Module_Down.io.Read_Addr:=Lty_Mark_Down.io.Mark_Out_Addr
+    // Compute_Module_Down.io.Read_Addr:=Lty_Mark_Down.io.Mark_Out_Addr
     Compute_Module_Down.io.Mul_I_In:=Lty_Cache_Module.io.Mul_I_Down
     Compute_Module_Down.io.Mul_J_In:=Lty_Cache_Module.io.Mul_J_Down
 
 
     //连接计算模块的fifo
     //val Para1_Fifo=new StreamFifo(Bool(),16)//-----第一个参数似乎不需要单独fifo处理
-    val Para2_Fifo=new Lty_StreamFifo
     
+    val Para2_Fifo=new Lty_StreamFifo
+    val RW_Addr_Fifo=new Lty_AddrFifo//这个fifo的位宽要自己设置一下，目前设置的是1bit
+
+    // 
     // val Para3_Fifo=new StreamFifo(UInt(64 bits),16)
     // val Para4_Fifo=new StreamFifo(UInt(64 bits),16)
     // val Para5_Fifo=new StreamFifo(UInt(64 bits),16)
@@ -914,11 +923,17 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
     //上下同时写fifo产生冲突，处理策略如下：
         //如果上下同时写入fifo，那么先写入上一行的，再写入下一行的，同时在写入上一行的时候，拉低下一行的mready，确保上一行写fifo的时候，下一行不会继续提取连通域防止数据丢失
     val Fifo_Push_Valid=Lty_Mark_Up.io.Lty_Para_mValid?Lty_Mark_Up.io.Lty_Para_mValid|Lty_Mark_Down.io.Lty_Para_mValid
-    Para2_Fifo.io.push.valid:=Delay(Fifo_Push_Valid,16)
+    val Push_Valid_Delayed=Delay(Fifo_Push_Valid,16)
+    Para2_Fifo.io.push.valid:=Push_Valid_Delayed
+    RW_Addr_Fifo.io.push.valid:=Push_Valid_Delayed
+
     Lty_Mark_Down.io.Lty_Para_mReady:=Lty_Mark_Up.io.Lty_Para_mValid?False|Para2_Fifo.io.push.ready
     
     Para2_Fifo.io.push.ready<>Lty_Mark_Up.io.Lty_Para_mReady
-    Para2_Fifo.io.push.payload:=Delay(Lty_Mark_Up.io.Lty_Para_mValid,16)?Compute_Module_Up.io.Para_2_Out|Compute_Module_Down.io.Para_2_Out
+
+    val MarkUp_Valid_Delay= Delay(Lty_Mark_Up.io.Lty_Para_mValid,16)
+    Para2_Fifo.io.push.payload:=MarkUp_Valid_Delay?Compute_Module_Up.io.Para_2_Out|Compute_Module_Down.io.Para_2_Out
+    RW_Addr_Fifo.io.push.payload:=MarkUp_Valid_Delay?Delay(RW_Addr_Up,16)|Delay(RW_Addr_Down,16)
     //对于进fifo的数据，有两条数据源：第一行的数据和第二行的数据
         /*
             如果11 拍前上下同时要向fifo中写入数据，经过乘法器后11拍拿到计算结果，这个结果需要向fifo中写入
@@ -927,16 +942,20 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
         
         */
     Para2_Fifo.io.pop.ready:=True//待处理
+    RW_Addr_Fifo.io.pop.ready:=True
 
 
+
+
+    //val Up_Para1_Mem=Mem(UInt(Config.LTY_MARK_BRAM_WIDTH bits),wordCount=Config.LTY_MARK_BRAM_DEPTH)//连通域参数存储
+    //val Up_Para2_Mem=Mem(UInt(Config.LTY_MARK_BRAM_WIDTH bits),wordCount=Config.LTY_MARK_BRAM_DEPTH)//连通域参数存储
+    //val Up_Para3_Mem=Mem(UInt(Config.LTY_MARK_BRAM_WIDTH bits),wordCount=Config.LTY_MARK_BRAM_DEPTH)//连通域参数存储
 
     
 
 
 
 }
-
-
 
 object LtyGen extends App { 
     val verilog_path="./testcode_gen/Lty_Gen_V3" 

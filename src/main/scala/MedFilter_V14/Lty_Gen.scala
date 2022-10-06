@@ -938,7 +938,7 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
     Lty_Mark_Up.io.Lty_Para_mReady:=(Para2_Fifo.io.push.ready)//只要没满就能一直写
 
 
-    Para2_Fifo.io.push.payload:=Delay(Lty_Mark_Up.io.Lty_Para_mValid,11)?Compute_Module_Up.io.Para_2_Out|Compute_Module_Down.io.Para_2_Out
+    Para2_Fifo.io.push.payload:=RegNext(Compute_Module_Up.io.Para_2_Out)//Delay(Lty_Mark_Up.io.Lty_Para_mValid,11)?Compute_Module_Up.io.Para_2_Out|Compute_Module_Down.io.Para_2_Out
     //对于进fifo的数据，有两条数据源：第一行的数据和第二行的数据
         /*
             如果11 拍前上下同时要向fifo中写入数据，经过乘法器后11拍拿到计算结果，这个结果需要向fifo中写入

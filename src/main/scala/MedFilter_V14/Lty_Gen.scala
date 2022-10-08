@@ -790,7 +790,6 @@ class Compute_Sub_Module(Left_Shift:Int,Pixel_In_Width:Int,Mul_Out_Width:Int) ex
 
 
 
-
     //sData控制=====================================================================================================
 
 
@@ -895,7 +894,7 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
 
     val Compute_Module_Up=new Compute_Sub_Module(10,16,64)
     val Compute_Data_In_Up=UInt(16 bits)
-    Compute_Data_In_Up:=Lty_Cache_Module.io.mData1.valid?Lty_Cache_Module.io.mData1.payload|RegNext(Compute_Data_In_Up)
+    Compute_Data_In_Up:=Lty_Cache_Module.io.mData1.valid?Lty_Cache_Module.io.mData1.payload|RegNext(Compute_Data_In_Up)//放一个latch
     Compute_Module_Up.io.Pixel_In:=Compute_Data_In_Up
 
 
@@ -930,15 +929,17 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
         //如果上下同时写入fifo，那么先写入上一行的，再写入下一行的，同时在写入上一行的时候，拉低下一行的mready，确保上一行写fifo的时候，下一行不会继续提取连通域防止数据丢失
         //Para_Valid无需单独处理，因为处于有效状态内Para_valid会一直拉高
 
-    val Fifo_Push_Valid=Lty_Mark_Up.io.Lty_Para_mValid//?Lty_Mark_Up.io.Lty_Para_mValid|Lty_Mark_Down.io.Lty_Para_mValid
+    val Fifo_Push_Valid=Lty_Mark_Up.io.Lty_Para_mValid?Lty_Mark_Up.io.Lty_Para_mValid|Lty_Mark_Down.io.Lty_Para_mValid
     val Fifo_Push_Valid_Delayed=Delay(Fifo_Push_Valid,11)//这里延迟11拍（6+5）就不行
+
+
     Para2_Fifo.io.push.valid:=Fifo_Push_Valid_Delayed
 
     Lty_Mark_Down.io.Lty_Para_mReady:=Lty_Mark_Up.io.Lty_Para_mValid?False|(Para2_Fifo.io.push.ready)
     Lty_Mark_Up.io.Lty_Para_mReady:=(Para2_Fifo.io.push.ready)//只要没满就能一直写
 
-
-    Para2_Fifo.io.push.payload:=RegNext(Compute_Module_Up.io.Para_2_Out)//Delay(Lty_Mark_Up.io.Lty_Para_mValid,11)?Compute_Module_Up.io.Para_2_Out|Compute_Module_Down.io.Para_2_Out
+    val Delay_Valid=Delay(Lty_Mark_Up.io.Lty_Para_mValid,11)
+    Para2_Fifo.io.push.payload:=Delay_Valid?Compute_Module_Up.io.Para_2_Out|Compute_Module_Down.io.Para_2_Out
     //对于进fifo的数据，有两条数据源：第一行的数据和第二行的数据
         /*
             如果11 拍前上下同时要向fifo中写入数据，经过乘法器后11拍拿到计算结果，这个结果需要向fifo中写入
@@ -950,10 +951,22 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
     // when(RegNext(Para2_Fifo.io.pop.valid)){
     //     Para2_Fifo.io.pop.ready:=True//下层一直准备好接受数据
     // }otherwise{
-        
     // }
-Para2_Fifo.io.pop.ready:=True//下层一直准备好接受数据
+    Para2_Fifo.io.pop.ready:=True//下层一直准备好接受数据
+    //创建地址fifo==========================================================================
+    val Mark_Up_Latch=UInt(Config.LTY_MARK_BRAM_WIDTH bits)
+    Mark_Up_Latch:=Lty_Mark_Up.io.Mark_Out_Valid?Lty_Mark_Up.io.Mark_Out|RegNext(Mark_Up_Latch)
+    val Mark_Down_Latch=UInt(Config.LTY_MARK_BRAM_WIDTH bits)
+    Mark_Down_Latch:=Lty_Mark_Down.io.Mark_Out_Valid?Lty_Mark_Down.io.Mark_Out|RegNext(Mark_Down_Latch)
+
+    val Addr_Fifo=new StreamFifo(UInt(Config.LTY_MARK_BRAM_WIDTH bits),16)
     
+    Addr_Fifo.io.push.payload:=Delay_Valid?Delay(Mark_Up_Latch,11)|Delay(Mark_Down_Latch,11)
+    Addr_Fifo.io.push.valid:=Fifo_Push_Valid_Delayed
+    Addr_Fifo.io.pop.ready:=True//下层一直准备好接受数据
+    //累加和Bram============================================================================
+    // val Para2_Mem=new Mem(UInt(64 bits),1024)
+    // Para2_Mem.write()
 
 }
 
@@ -963,5 +976,5 @@ object LtyGen extends App {
     val verilog_path="./testcode_gen/Lty_Gen_V3" 
 //    SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Lty_Mark_Gen)
    SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Feature_Mark)
-   SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Compute_Sub_Module(10,16,64))
+//    SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Compute_Sub_Module(10,16,64))
 }

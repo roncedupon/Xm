@@ -952,7 +952,7 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
     // }otherwise{
         
     // }
-Para2_Fifo.io.pop.ready:=False//下层一直准备好接受数据
+Para2_Fifo.io.pop.ready:=True//下层一直准备好接受数据
     
 
 }

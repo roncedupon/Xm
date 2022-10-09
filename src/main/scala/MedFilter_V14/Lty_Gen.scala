@@ -1,3 +1,4 @@
+//此版本276的所有点都标对了
 package MedFilter_V12
 import spinal.core._
 import spinal.lib.slave
@@ -1111,7 +1112,7 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
 
 object LtyGen extends App { 
     val verilog_path="./testcode_gen/Lty_Gen_V3" 
-//    SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Lty_Mark_Gen)
-   SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Feature_Mark)
+   SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Mark_Para)
+//    SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Feature_Mark)
 //    SpinalConfig(targetDirectory=verilog_path, defaultConfigForClockDomains = ClockDomainConfig(resetActiveLevel = HIGH)).generateVerilog(new Compute_Sub_Module(10,16,64))
 }

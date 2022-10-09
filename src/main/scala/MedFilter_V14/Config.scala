@@ -32,7 +32,7 @@ case class MemConfig(){
     val LTY_ROW_NUM=2040//2048个点，减去前面4个和后面4个，2040，
         //标记矩阵相关
     val LTY_MARK_BRAM_DEPTH=LTY_COL_NUM//标记矩阵的深度，也不用加一
-    val LTY_MARK_BRAM_WIDTH=9//标记矩阵的数据位宽（1024）
+    val LTY_MARK_BRAM_WIDTH=10//标记矩阵的数据位宽（1024）
         //滤波后的图片缓存
     val LTY_DATA_BRAM_A_WIDTH=64//二并行度，输入是32 bit，输出是16 bit
     val LTY_DATA_BRAM_B_WIDTH=16//出16 bit
@@ -43,7 +43,7 @@ case class MemConfig(){
     val LTY_MULij_DELAY=5//
     val SHIFT_LEFT=10//左移10位tempBackMeam的相对误差是0.4%，应该能用
         //连通域计算后的6参数存储,不用BRAM了，直接使用spinal的mem
-    val LTY_PARAM_MEM_DEPTH=512//2^LTY_DATA_BRAM_A_DEPTH,记得修改
+    val LTY_PARAM_MEM_DEPTH=2<<(LTY_MARK_BRAM_WIDTH-1)//2^LTY_DATA_BRAM_A_DEPTH,记得修改
     val LTY_PARAM1_MEM_WIDTH=16//第一个参数：像素值
     val LTY_PARAM2_MEM_WIDTH=64//LtyData(ImgMark(i,j),1) = LtyData(ImgMark(i,j),1) + 1 ;% size
     val LTY_PARAM3_MEM_WIDTH=64//LtyData(ImgMark(i,j),2) = LtyData(ImgMark(i,j),2) + double(ImgFilter(i,j)-temp_back_mean)^2*(i) ;% FZX

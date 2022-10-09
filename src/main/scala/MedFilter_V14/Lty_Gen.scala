@@ -6,6 +6,7 @@ import spinal.lib.master
 import spinal.lib.Delay
 import scala.collection.script.Start
 import spinal.lib.StreamFifo
+import spinal.lib.bus.bram.BRAM
 class Lty_Bram extends BlackBox{//黑盒，入32bit，出16 bit
     val Config=MemConfig()//浮点乘法器
     val io=new Bundle{//component要求out有驱动，但是black box不要求out的驱动
@@ -193,6 +194,8 @@ class Lty_Feature_Cache extends Component{//连通域标记
         val Mul_J_Up=out UInt(11 bits)
         val Mul_J_Down=out UInt(11 bits)
 
+        val Init_Bram_Valid=out Bool()//初始化Bram数据
+
     }
     noIoPrefix()
     val Fsm=LTY_FSM(io.start&&(!RegNext(io.start)))
@@ -342,6 +345,8 @@ class Lty_Feature_Cache extends Component{//连通域标记
 
     io.strat_Sub_Module1:=Fsm_LineUp.currentState===LTY_ENUM_UP.WAIT_EXTRACT_LTY&&(!RegNext(Fsm_LineUp.currentState===LTY_ENUM_UP.WAIT_NEXT_READY))
     io.strat_Sub_Module2:=Fsm.currentState===LTY_ENUM.WAIT_NEXT_READY&&(!RegNext(Fsm.currentState===LTY_ENUM.WAIT_NEXT_READY))//在这个状态下就启动连通域提取
+    
+    
 }//
 object MARK_ENUM extends SpinalEnum(defaultEncoding = binaryOneHot) {
     //启动信号是非常有必要的，比如第一行启动后，需要处理至少5个点后才能启动第二行的处理
@@ -583,8 +588,8 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         Fsm.Up0_Left1:=False
         Fsm.Up1_Cond:=False
         when(Fsm.Get_Data_End){
-            io.Mark_Out:=io.Lty_Total_NUm+1//那么这是一个新的连通域、
-            Shift_Mark_In:=io.Lty_Total_NUm+1
+            io.Mark_Out:=io.Lty_Total_NUm+U(1,1 bits)//那么这是一个新的连通域、
+            Shift_Mark_In:=io.Lty_Total_NUm+U(1,1 bits)
         }
 
     }elsewhen(io.Up_mark =/= 0){//只要上不为0就直接启动左四个点的判断了
@@ -660,6 +665,8 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
             io.Lty_Para_mValid:=True
             io.Mark_Out:=Left_Mark(0)
             io.Mark_Out_Addr:=Pixel_In_Cnt.count-2
+
+            io.Mark_Out_Valid:=True
         }
 
     }
@@ -672,6 +679,8 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
             io.Mark_Out:=Left_Mark(0)
             io.Lty_Para_mValid:=True
             io.Mark_Out_Addr:=Pixel_In_Cnt.count-3
+
+            io.Mark_Out_Valid:=True
         }
     }
     Fsm.UpData_Left4_End:=io.Lty_Para_mReady
@@ -683,6 +692,8 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
             io.Mark_Out:=Left_Mark(0)
             io.Lty_Para_mValid:=True
             io.Mark_Out_Addr:=Pixel_In_Cnt.count-4
+
+            io.Mark_Out_Valid:=True
         }
     }
     when(Fsm.currentState===MARK_ENUM.UPDATA_LEFT4){//更新左边四个点
@@ -693,6 +704,8 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
             io.Mark_Out:=Left_Mark(0)
             io.Lty_Para_mValid:=True
             io.Mark_Out_Addr:=Pixel_In_Cnt.count-5
+
+            io.Mark_Out_Valid:=True
         }
     }
 //输出的要更新的标记点握手信号处理============================================================
@@ -810,8 +823,46 @@ class Compute_Sub_Module(Left_Shift:Int,Pixel_In_Width:Int,Mul_Out_Width:Int) ex
 //     mapClockDomain(clock=io.clk)//,reset = io.srst,resetActiveLevel = LOW)
     
 // }
+object BRAM_INIT extends SpinalEnum(defaultEncoding = binaryOneHot) {
+  val IDLE,INIT_BRAM,ACCU = newElement
+  //INIT_BRAM:初始化Bram，初始化为0
+  //ACCU：accumulation，计算累加和状态
+}
+class Para_Bram_Fsm(start:Bool) extends Area{
+    val currentState = Reg(BRAM_INIT()) init BRAM_INIT.IDLE
+    val nextState = BRAM_INIT()
+    currentState := nextState
+
+
+    val Init_End=Bool()
+    val Para_Sended=Bool()//最后发送完全部参数了
+    switch(currentState){
+        is(BRAM_INIT.IDLE){
+            when(start){
+                nextState:=BRAM_INIT.INIT_BRAM
+            }otherwise{
+                nextState:=BRAM_INIT.IDLE
+            }
+        }
+        is(BRAM_INIT.INIT_BRAM){
+            when(Init_End){
+                nextState:=BRAM_INIT.ACCU
+            }otherwise{
+                nextState:=BRAM_INIT.INIT_BRAM
+            }
+        }
+        is(BRAM_INIT.ACCU){
+            when(Para_Sended){
+                nextState:=BRAM_INIT.IDLE
+            }otherwise{
+                nextState:=BRAM_INIT.ACCU
+            }
+        }
+    }
+}
+
 class Lty_StreamFifo extends StreamFifo(UInt(64 bits),16)
-class Feature_Mark extends Component{//整合图片缓存模块和标记模块
+class Mark_Para extends Component{//整合图片缓存模块和标记模块
     val Lty_Cache_Module=new Lty_Feature_Cache
     val Lty_Mark_Up=new Lty_Mark_Sub_Module
     val Lty_Mark_Down=new Lty_Mark_Sub_Module
@@ -952,7 +1003,7 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
     //     Para2_Fifo.io.pop.ready:=True//下层一直准备好接受数据
     // }otherwise{
     // }
-    Para2_Fifo.io.pop.ready:=True//下层一直准备好接受数据
+    Para2_Fifo.io.pop.ready:=False//这个Ready由下面的状态机控制
     //创建地址fifo==========================================================================
     val Mark_Up_Latch=UInt(Config.LTY_MARK_BRAM_WIDTH bits)
     Mark_Up_Latch:=Lty_Mark_Up.io.Mark_Out_Valid?Lty_Mark_Up.io.Mark_Out|RegNext(Mark_Up_Latch)
@@ -963,14 +1014,100 @@ class Feature_Mark extends Component{//整合图片缓存模块和标记模块
     
     Addr_Fifo.io.push.payload:=Delay_Valid?Delay(Mark_Up_Latch,11)|Delay(Mark_Down_Latch,11)
     Addr_Fifo.io.push.valid:=Fifo_Push_Valid_Delayed
-    Addr_Fifo.io.pop.ready:=True//下层一直准备好接受数据
-    //累加和Bram============================================================================
-    // val Para2_Mem=new Mem(UInt(64 bits),1024)
-    // Para2_Mem.write()
+    Addr_Fifo.io.pop.ready:=False//这个Ready由下面的状态机控制
+    //创建累加Bram(para1)===============================================================================
 
+
+    //创建累加和Bram (para2)============================================================================
+    val Bram_Fsm=new Para_Bram_Fsm(Start_Once)
+    val Bram_Init_Count=WaCounter(Bram_Fsm.currentState===BRAM_INIT.INIT_BRAM,log2Up(1024),1023)
+    Bram_Fsm.Init_End:=Bram_Init_Count.valid
+    Bram_Fsm.Para_Sended:=False//待修改
+
+    when(Bram_Fsm.currentState===BRAM_INIT.ACCU){
+        Addr_Fifo.io.pop.ready:=True//下层一直准备好接受数据
+        Para2_Fifo.io.pop.ready:=True//下层一直准备好接受数据
+    }
+    val Para2_Mem=new Mem(UInt(64 bits),1024)
+    val Write_Mem_Addr=RegNext(Addr_Fifo.io.pop.payload)
+    val Write_Mem_Valid=RegNext(Addr_Fifo.io.pop.valid)
+
+        //由于Bram没有初始化，所以在第一次读出再写入时需要处理一下
+
+    val Write_Para2_Mem=RegNext(Para2_Fifo.io.pop.payload)+Para2_Mem.readSync(Addr_Fifo.io.pop.payload,Addr_Fifo.io.pop.valid)
+    
+    when(Bram_Fsm.currentState===BRAM_INIT.INIT_BRAM){
+        Para2_Mem.write(Bram_Init_Count.count,U(0,64 bits),True)//用这样来初始化
+    }otherwise{
+        Para2_Mem.write(Write_Mem_Addr,Write_Para2_Mem,Write_Mem_Valid)
+    }
 }
+//=====================================单独处理标记和缓存模块模块==================================================
+class Feature_Mark extends Component{//整合图片缓存模块和标记模块
+    val Lty_Cache_Module=new Lty_Feature_Cache
+    val Lty_Mark_Up=new Lty_Mark_Sub_Module
+    val Lty_Mark_Down=new Lty_Mark_Sub_Module
+    val Config=MemConfig()
+    val io=new Bundle{
+        val sData=slave Stream(UInt(Config.LTY_DATA_BRAM_A_WIDTH bits))//进来的数据
+        val start=in Bool()//lty计算启动信号
+
+        val Temp_Back_Mean=in UInt(16 bits)//左移32Bit需要32 bit位宽---不过目前按左移12、13bit来处理的(仿真用左移10位)
+        val Sign_Flag=in Bool()//有无符号位
+        val Temp_Back_Thrd=in UInt(16 bits)//由于进来的图片像素点都是整形，而Temp_Back_Thrd的实际值带小数，所以可以将Temp_Back_Thrd向上取整
+    }
+    noIoPrefix()
+    Lty_Cache_Module.io.sData<>io.sData
+    Lty_Cache_Module.io.start<>io.start
+    val Total_Num_Reg=Reg(UInt(log2Up(Config.LTY_PARAM_MEM_DEPTH) bits))init(0)//创建连通域计数器
+    val Start_Once=io.start&&(!RegNext(io.start))
+    when(Start_Once){
+        Total_Num_Reg:=0
+    }
+    // otherwise{
+    //     Total_Num_Reg:=Total_Num_Reg
+    // }
+    //Line up=======================================================
+    Lty_Mark_Up.io.start:=Lty_Cache_Module.io.strat_Sub_Module1||Start_Once
+    Lty_Mark_Up.io.sData<>Lty_Cache_Module.io.mData1
+    Lty_Mark_Up.io.Lty_Total_NUm:=Total_Num_Reg
+
+    Lty_Mark_Up.io.Up_mark<>Lty_Cache_Module.io.Mark1Up_Out
+    Lty_Mark_Up.io.Mark_Out_Addr<>Lty_Cache_Module.io.Mark1_In_Addr
+    Lty_Mark_Up.io.Mark_Out_Valid<>Lty_Cache_Module.io.Mark1_In_Valid
+    Lty_Mark_Up.io.Mark_Out<>Lty_Cache_Module.io.Mark1_In
+
+    Lty_Mark_Up.io.Sign_Flag<>io.Sign_Flag
+    Lty_Mark_Up.io.Temp_Back_Mean<>io.Temp_Back_Mean
+    Lty_Mark_Up.io.Temp_Back_Thrd<>io.Temp_Back_Thrd
+
+    Lty_Mark_Up.io.sData_Receive_End<>Lty_Cache_Module.io.mData1_End_Receive
+    Lty_Mark_Up.io.Lty_Para_mReady:=True//待修改
+    //Line Down=====================================================
+    Lty_Mark_Down.io.start:=Lty_Cache_Module.io.strat_Sub_Module2||Start_Once
+    Lty_Mark_Down.io.sData<>Lty_Cache_Module.io.mData2
+    Lty_Mark_Down.io.Lty_Total_NUm:=Total_Num_Reg
+
+    Lty_Mark_Down.io.Up_mark<>Lty_Cache_Module.io.Mark2Up_Out
+    Lty_Mark_Down.io.Mark_Out_Addr<>Lty_Cache_Module.io.Mark2_In_Addr
+    Lty_Mark_Down.io.Mark_Out_Valid<>Lty_Cache_Module.io.Mark2_In_Valid
+    Lty_Mark_Down.io.Mark_Out<>Lty_Cache_Module.io.Mark2_In
+
+    Lty_Mark_Down.io.Sign_Flag<>io.Sign_Flag
+    Lty_Mark_Down.io.Temp_Back_Mean<>io.Temp_Back_Mean
+    Lty_Mark_Down.io.Temp_Back_Thrd<>io.Temp_Back_Thrd    
+    val Test_cnt=WaCounter(True,5,31)
+    
+    Lty_Mark_Down.io.Lty_Para_mReady:=Test_cnt.count>16//True//待修改
 
 
+
+    when(Lty_Mark_Up.io.New_Lty_Gen&&Lty_Mark_Down.io.New_Lty_Gen){
+        Total_Num_Reg:=Total_Num_Reg+2//同时满足，加2个连通域
+    }elsewhen(Lty_Mark_Up.io.New_Lty_Gen||Lty_Mark_Down.io.New_Lty_Gen){//只有一个连通域生成
+        Total_Num_Reg:=Total_Num_Reg+1
+    }
+}
 
 object LtyGen extends App { 
     val verilog_path="./testcode_gen/Lty_Gen_V3" 

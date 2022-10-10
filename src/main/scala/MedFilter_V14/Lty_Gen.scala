@@ -1035,7 +1035,11 @@ class Mark_Para extends Component{//整合图片缓存模块和标记模块
 
         //由于Bram没有初始化，所以在第一次读出再写入时需要处理一下
 
-    val Write_Para2_Mem=RegNext(Para2_Fifo.io.pop.payload)+Para2_Mem.readSync(Addr_Fifo.io.pop.payload,Addr_Fifo.io.pop.valid)
+    val Write_Para2_Mem=RegNext(Para2_Fifo.io.pop.payload)+Para2_Mem.readSync(Addr_Fifo.io.pop.payload,Addr_Fifo.io.pop.valid,writeFirst)//写优先
+    //写优先处理读写冲突：
+        /*
+            比如第一个点是新建252连通域，第二个点上面是251，所以第二个点被归为251连通域，然后还要将左边的那个点改为251连通域，这里需要处理读写冲突
+        */
     
     when(Bram_Fsm.currentState===BRAM_INIT.INIT_BRAM){
         Para2_Mem.write(Bram_Init_Count.count,U(0,64 bits),True)//用这样来初始化

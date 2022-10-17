@@ -519,10 +519,15 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
         // val Lty_Para5_mData=out UInt(Config.LTY_PARAM5_MEM_WIDTH bits)//其实6和5一样，不知道还要不要再多开一个。。。
         // val Lty_Para6_mData=out UInt(Config.LTY_PARAM6_MEM_WIDTH bits)---注掉的原因：Dsp可以计算A*B+C,还是单独拿一个模块来处理累加计算好了
 
-//================================================================================
+//======V15 添加====================================================================
+        //如果修改左边的点并且把左边的点归于上面那个点的连通域内，累加和Bram的读地址需要改为左边那个点对应的地址
+        //如果要多次读取同一个连通域的值并累加，可能会有读写冲突的问题，所以累加和Bram需要采取写优先的策略
+
+        val Bram_Read_Addr=out UInt(Config.LTY_MARK_BRAM_WIDTH bits)//之前传给累加和Bram的读地址是Mark_Out,现在需要改一下
 
     }
     io.Mark_Out:=0
+    io.Bram_Read_Addr:=0
     io.Lty_Para_mValid:=False
     noIoPrefix()
 //状态机相关=============================================================================================
@@ -548,7 +553,7 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
     Shift_Start_First:=io.sData.valid
     Shift_Mark_In:=0
     when(Shift_Start_First){
-        Left_Mark(0):=Shift_Mark_In//代表下一个点对应的左标记
+        Left_Mark(0):=Shift_Mark_In//代表下一个点对应的左标记，只是一个缓存值，当处理下一个点时，下一个点的左标记是leftmark(1)
     }otherwise{
         Left_Mark(0):=Left_Mark(0)
     }
@@ -661,14 +666,18 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
 
     Fsm.UpData_Left2_End:=io.Lty_Para_mReady//数据发完就结束
     when(Fsm.currentState===MARK_ENUM.UPDATA_LEFT1){//更新左边四个点
-        Shift_Start:=False
+        Shift_Start:=False//完蛋了，忘记自己之前为什么这样写了-------10.17⭐
+        //重新理解一下自己的代码：只要处于当前点有效的这几个状态中，首先这个left(0)代表的是当前点的标记，状态结束后shift_Start拉高，然后在下一个周期Left(1)拿到了LEft(0)的值
+        //而下一个周期判断的是下一个点，那么left(1)就理所当然的成为了下一个点的左标记，以此类推--10.17
         Left_Mark(1):=Left_Mark(0)//不论满不满足下面的条件，Left_Mark(1)都要被更新，留给下一个点用
+        //👆：这个地方的代码和下面三个状态的代码有所区别，要注意
         when(Left_Mark(1)=/=0&&Left_Mark(1)=/=Left_Mark(0)){
             io.Lty_Para_mValid:=True
             io.Mark_Out:=Left_Mark(0)
             io.Mark_Out_Addr:=Pixel_In_Cnt.count-2
-
             io.Mark_Out_Valid:=True
+
+            io.Bram_Read_Addr:=Left_Mark(1)
         }
 
     }
@@ -683,6 +692,7 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
             io.Mark_Out_Addr:=Pixel_In_Cnt.count-3
 
             io.Mark_Out_Valid:=True
+            io.Bram_Read_Addr:=Left_Mark(2)
         }
     }
     Fsm.UpData_Left4_End:=io.Lty_Para_mReady
@@ -696,6 +706,7 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
             io.Mark_Out_Addr:=Pixel_In_Cnt.count-4
 
             io.Mark_Out_Valid:=True
+            io.Bram_Read_Addr:=Left_Mark(3)
         }
     }
     when(Fsm.currentState===MARK_ENUM.UPDATA_LEFT4){//更新左边四个点
@@ -708,6 +719,7 @@ class Lty_Mark_Sub_Module extends Component{//标记子模块
             io.Mark_Out_Addr:=Pixel_In_Cnt.count-5
 
             io.Mark_Out_Valid:=True
+            io.Bram_Read_Addr:=Left_Mark(4)
         }
     }
 //输出的要更新的标记点握手信号处理============================================================
@@ -1008,9 +1020,9 @@ class Mark_Para extends Component{//整合图片缓存模块和标记模块
     Para2_Fifo.io.pop.ready:=False//这个Ready由下面的状态机控制
     //创建地址fifo==========================================================================
     val Mark_Up_Latch=UInt(Config.LTY_MARK_BRAM_WIDTH bits)
-    Mark_Up_Latch:=Lty_Mark_Up.io.Mark_Out_Valid?Lty_Mark_Up.io.Mark_Out|RegNext(Mark_Up_Latch)
+    Mark_Up_Latch:=Lty_Mark_Up.io.Mark_Out_Valid?Lty_Mark_Up.io.Bram_Read_Addr|RegNext(Mark_Up_Latch)
     val Mark_Down_Latch=UInt(Config.LTY_MARK_BRAM_WIDTH bits)
-    Mark_Down_Latch:=Lty_Mark_Down.io.Mark_Out_Valid?Lty_Mark_Down.io.Mark_Out|RegNext(Mark_Down_Latch)
+    Mark_Down_Latch:=Lty_Mark_Down.io.Mark_Out_Valid?Lty_Mark_Down.io.Bram_Read_Addr|RegNext(Mark_Down_Latch)
 
     val Addr_Fifo=new StreamFifo(UInt(Config.LTY_MARK_BRAM_WIDTH bits),16)
     
@@ -1035,12 +1047,17 @@ class Mark_Para extends Component{//整合图片缓存模块和标记模块
     val Write_Mem_Valid=RegNext(Addr_Fifo.io.pop.valid)
 
         //由于Bram没有初始化，所以在第一次读出再写入时需要处理一下
-
-    val Write_Para2_Mem=RegNext(Para2_Fifo.io.pop.payload)+Para2_Mem.readSync(Addr_Fifo.io.pop.payload,Addr_Fifo.io.pop.valid,writeFirst)//写优先
+    val Write_Para2_Mem=UInt(64 bits)
     //写优先处理读写冲突：
-        /*
-            比如第一个点是新建252连通域，第二个点上面是251，所以第二个点被归为251连通域，然后还要将左边的那个点改为251连通域，这里需要处理读写冲突
-        */
+    /*
+        比如第一个点是新建252连通域，第二个点上面是251，所以第二个点被归为251连通域，然后还要将左边的那个点改为251连通域，这里需要处理读写冲突
+    */
+    //val Write_Para2_Mem=RegNext(Para2_Fifo.io.pop.payload)+Para2_Mem.readSync(Addr_Fifo.io.pop.payload,Addr_Fifo.io.pop.valid,writeFirst)//写优先
+    Write_Para2_Mem:=((Addr_Fifo.io.pop.payload===Write_Mem_Addr)?(RegNext(Para2_Fifo.io.pop.payload)+RegNext(Write_Para2_Mem))|(RegNext(Para2_Fifo.io.pop.payload)+Para2_Mem.readSync(Addr_Fifo.io.pop.payload,Addr_Fifo.io.pop.valid)))//写优先
+    //10.17这里说的是，一般来说读写地址不会冲突的，唯一产生冲突的地方是上不为0加左边四个判断
+    //比如第一个点上为0，左也为0，但是这个点像素值大于阈值，那么将这个点归于新的连通域，
+        //但是下一个点的上不为0，将左边那个点归于上面点对应的连通域内，读写冲突产生
+
     
     when(Bram_Fsm.currentState===BRAM_INIT.INIT_BRAM){
         Para2_Mem.write(Bram_Init_Count.count,U(0,64 bits),True)//用这样来初始化

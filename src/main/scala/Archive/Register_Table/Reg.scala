@@ -51,10 +51,14 @@ class Reg_Zedboard extends Component{
 	//这里的只读和只写对应的是master那边的只读和只写
 	val Reg0  = bus.newReg(doc="REG0")
 	val Reg1  = bus.newReg(doc="REG1")
-	val LD0123=Reg0.field(Bits(4 bit),WO,doc="O:接外面的灯，测试").asOutput()
+	val Reg2  = bus.newReg(doc="REG1")
+	val Reg3  = bus.newReg(doc="REG1")
+	val Instru1=Reg0.field(Bits(32 bit),WO,doc="O:接外面的灯，测试").asOutput()
+	val Instru2=Reg1.field(Bits(32 bit),WO,doc="O:接外面的灯，测试").asOutput()
+	val Instru3=Reg2.field(Bits(32 bit),WO,doc="O:接外面的灯，测试").asOutput()
+	val Instru4=Reg3.field(Bits(32 bit),WO,doc="O:接外面的灯，测试").asOutput()
 	//val Read_Ps_Num=Reg0.field(Bits(10 bit),WO,doc="pl 从ps ddr读数据的数量").asInput()--报错
-	val LD4567=Reg0.field(Bits(4 bit),WO,doc="O:接外面的灯，测试").asOutput()
-	val Const_FEDCB=Reg1.field(Bits(20 bits),RO,doc="I:Constant，让PS读的测试接口").asInput()
+	
 	//只写部分需要一个驱动
 	// Read_Ps_Num:=B"10'b0"
 	//总结:只读用asInput(),只写用asOutput()
@@ -106,30 +110,30 @@ case class AxiLite4Driver(axi : AxiLite4, clockDomain : ClockDomain) {
   }
 }
 
-object Sim_AxiLite {
-  def main(args: Array[String]) {
-      SimConfig.withWave.workspacePath("./simworkspace").compile(new Reg_Zedboard).doSim{dut =>
-        dut.clockDomain.forkStimulus(100)
-		val driver=AxiLite4Driver(dut.regSData,dut.clockDomain)
-		dut.clockDomain.waitSampling()
-		dut.Const_FEDCB#=1234
-		dut.clockDomain.waitSampling()
-		driver.reset()
-		dut.clockDomain.waitSampling()
-          //print(i+"____")
-          //printf("-----------------%x-------------------\n",dut.pc_module.IO.Pc_out.toBigInt)
-		driver.write(0,0xf)
-		dut.clockDomain.waitSampling()
-		driver.write(0,0xf0)
-		dut.clockDomain.waitSampling()
-		driver.read(0x4)
-		dut.clockDomain.waitSampling()
-		dut.clockDomain.waitSampling()
-		dut.clockDomain.waitSampling()
-		dut.clockDomain.waitSampling()
-//        printf("-读数据%lx-----------------------------------\n",)
-          //printf("%x\n",dut.Reg_file.mem(3).toBigInt)//写法一
-          //printf("%x\n",hh.toBigInt)//写法二
-    }
-  }
-}
+// object Sim_AxiLite {
+//   def main(args: Array[String]) {
+//       SimConfig.withWave.workspacePath("./simworkspace").compile(new Reg_Zedboard).doSim{dut =>
+//         dut.clockDomain.forkStimulus(100)
+// 		val driver=AxiLite4Driver(dut.regSData,dut.clockDomain)
+// 		dut.clockDomain.waitSampling()
+// 		dut.Const_FEDCB#=1234
+// 		dut.clockDomain.waitSampling()
+// 		driver.reset()
+// 		dut.clockDomain.waitSampling()
+//           //print(i+"____")
+//           //printf("-----------------%x-------------------\n",dut.pc_module.IO.Pc_out.toBigInt)
+// 		driver.write(0,0xf)
+// 		dut.clockDomain.waitSampling()
+// 		driver.write(0,0xf0)
+// 		dut.clockDomain.waitSampling()
+// 		driver.read(0x4)
+// 		dut.clockDomain.waitSampling()
+// 		dut.clockDomain.waitSampling()
+// 		dut.clockDomain.waitSampling()
+// 		dut.clockDomain.waitSampling()
+// //        printf("-读数据%lx-----------------------------------\n",)
+//           //printf("%x\n",dut.Reg_file.mem(3).toBigInt)//写法一
+//           //printf("%x\n",hh.toBigInt)//写法二
+//     }
+//   }
+// }
